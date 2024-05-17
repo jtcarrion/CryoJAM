@@ -84,6 +84,45 @@ def calculate_rmsd(coords1, coords2):
     return rmsd
 
 
+def calculate_subset_fsc_losses(homolog_ca_predictions, true_ca, voxel_mask, shells):
+    
+
+    chain_64_fsc_box_loss = fsc_loss_function(homolog_ca_predictions * voxel_mask, 
+                                              true_ca * voxel_mask, shells)
+    
+    non_chain_64_fsc_box_loss = fsc_loss_function(homolog_ca_predictions * (1 - voxel_mask),
+                                          true_ca * (1 - voxel_mask), shells)
+
+    
+    h_masked, t_masked = homolog_ca_predictions * voxel_mask, true_ca * voxel_mask
+    mask_idx = torch.nonzero(voxel_mask, as_tuple=False)
+    min_mask, max_mask = mask_idx.min(axis=0)[0], mask_idx.max(axis=0)[0]
+    h_masked_resized = h_masked[min_mask[0]:max_mask[0]+1,
+                                  min_mask[1]:max_mask[1]+1,
+                                  min_mask[2]:max_mask[2]+1]
+    t_masked_resized = t_masked[min_mask[0]:max_mask[0]+1,
+                                  min_mask[1]:max_mask[1]+1,
+                                  min_mask[2]:max_mask[2]+1]
+
+    chain_fsc_subset_loss = fsc_loss_function(h_masked_resized, t_masked_resized, shells)
+    del h_masked, h_masked_resized, t_masked, t_masked_resized, mask_idx
+    # free up memory
+    
+    return chain_fsc_subset_loss.item(), chain_64_fsc_box_loss.item(), non_chain_64_fsc_box_loss.item()
+
+
+def update_fsc_loss_dict(chain_fsc_subset_loss, chain_64_fsc_box_loss, non_chain_64_fsc_box_loss, pdb, fsc_loss_values = fsc_loss_values):
+    if pdb not in fsc_loss_values["subset_chain"]:
+        fsc_loss_values["subset_chain"][pdb] = []
+        fsc_loss_values["box_chain"][pdb] = []
+        fsc_loss_values["box_non_chain"][pdb] = []
+        
+    fsc_loss_values["subset_chain"][pdb].append(chain_fsc_subset_loss)
+    fsc_loss_values["box_chain"][pdb].append(chain_64_fsc_box_loss)
+    fsc_loss_values["box_non_chain"][pdb].append(non_chain_64_fsc_box_loss)
+    # should be in place?
+
+
 # compute the loss given volumes
 def fsc_loss_function(prediction, target, num_shells=20):
     fsc_values = calculate_fsc(prediction, target, num_shells)
@@ -113,6 +152,13 @@ def coord_rmsd_loss_function(output, target, scale_dict):
     target_coords_sorted, output_coords_sorted = greedy_selection(target_coords, output_coords)
     loss = calculate_coord_rmsd(target_coords_sorted, output_coords_sorted)
     return loss
+
+
+def combined_loss_function(prediction, target, num_shells, alpha=1, beta=1, gamma=1):
+    fsc_loss = fsc_loss_function(prediction, target, num_shells)
+    rmse_loss = rmse_loss_function(prediction, target)
+    total_loss = alpha * fsc_loss + beta * rmse_loss 
+    return total_loss, fsc_loss, rmse_loss
 
 
 def check_distributions(trainLoader, testLoader, num_shells=20):
