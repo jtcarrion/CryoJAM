@@ -8,11 +8,6 @@ from torch.utils.data import DataLoader, random_split
 from utils.loss_utils import check_distributions
 import matplotlib.pyplot as plt
 import numpy as np
-from unet_model import UNet
-
-
-
-
 
 def train(dataset_path=, 
          seed=42, 
@@ -34,12 +29,6 @@ def train(dataset_path=,
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
     
-
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f'Using device: {device}')
-
-model = UNet().to(device)
 
 
     
