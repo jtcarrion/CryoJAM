@@ -78,8 +78,8 @@ def train(dataset_path: str = '/MIT/Project/GenAi_Project/data/20240512_cryo_dat
                 # Compute the predictions corresponding to the homolog_ca array
                 homolog_ca_predictions = outputs[:, :1, :, :, :]
                 # TODO: this is hard coded
-                assert homolog_ca_predictions.squeeze().shape == (64,64,64), "Batch included, may cause loss issue"
-                assert true_ca.squeeze().shape == (64,64,64), "Batch included, may cause loss issue"
+                assert homolog_ca_predictions.squeeze().shape == (64,64,64), "Batch included in dimensions, may cause loss issue"
+                assert true_ca.squeeze().shape == (64,64,64), "Batch included in dimensions, may cause loss issue"
     
                 homolog_ca_predictions = homolog_ca_predictions.squeeze()
                 true_ca = true_ca.squeeze()
