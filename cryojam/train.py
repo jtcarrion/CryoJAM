@@ -2,15 +2,14 @@
 import torch
 import numpy as np
 import h5py
-from utils.cryodataset import CryoDataNew # TODO: change
+from .cryodataset import CryoDataNew # TODO: change
 import torch
 from torch.utils.data import DataLoader, random_split
-from utils.loss_utils import check_distributions
+from .utils.loss_utils import check_distributions, combined_loss_function, calculate_subset_fsc_losses, update_fsc_loss_dict
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm  
-from unet_model import UNet
-from loss_utils import combined_loss_function, calculate_subset_fsc_losses, update_fsc_loss_dict
+from .unet_model import UNet
 
 
 def train(dataset_path: str = '/MIT/Project/GenAi_Project/data/20240512_cryo_data_with_scales_and_chains.h5', 

@@ -1,2 +1,7 @@
 .ipynb_checkpoints
 cryojam/.ipynb_checkpoints
+cryojam/__pycache__/
+cryojam/utils/__pycache__/
+cryojam.egg-info
+cryojam/.ipynb_checkpoints/train-checkpoint.py
+

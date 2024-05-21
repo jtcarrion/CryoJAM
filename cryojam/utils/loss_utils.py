@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from utils.prediction_utils import binarize_predictions, greedy_selection
+from .prediction_utils import binarize_predictions, greedy_selection
 
 def calculate_fsc(volume1, volume2, num_shells):
     # Compute the Fourier Transforms
@@ -44,6 +44,12 @@ def calculate_rmse(vol1, vol2):
     rmse = ((vol1 - vol2) ** 2).mean().sqrt()
     return rmse
 
+
+def calculate_dice(prediction, target):
+    intersection = torch.sum(prediction * target)
+    union = torch.sum(prediction) + torch.sum(target)
+    dice = (2. * intersection + smooth) / (union + smooth)
+    return dice
 
 def calculate_coord_rmsd(coords1, coords2):
     # coordinates should already be ordered by pairing.
@@ -111,7 +117,7 @@ def calculate_subset_fsc_losses(homolog_ca_predictions, true_ca, voxel_mask, she
     return chain_fsc_subset_loss.item(), chain_64_fsc_box_loss.item(), non_chain_64_fsc_box_loss.item()
 
 
-def update_fsc_loss_dict(chain_fsc_subset_loss, chain_64_fsc_box_loss, non_chain_64_fsc_box_loss, pdb, fsc_loss_values = fsc_loss_values):
+def update_fsc_loss_dict(chain_fsc_subset_loss, chain_64_fsc_box_loss, non_chain_64_fsc_box_loss, pdb, fsc_loss_values):
     if pdb not in fsc_loss_values["subset_chain"]:
         fsc_loss_values["subset_chain"][pdb] = []
         fsc_loss_values["box_chain"][pdb] = []
@@ -135,6 +141,9 @@ def rmsd_loss_function(prediction, target):
 def rmse_loss_function(prediction, target):
     return calculate_rmse(prediction, target)
 
+def dice_loss_function(prediction, target):
+    return 1 - scalculate_dice(prediction, target)
+
 def cosine_similarity_loss_function(output, target):
     output_flat = output.view(output.size(0), -1)
     target_flat = target.view(target.size(0), -1)
@@ -157,8 +166,9 @@ def coord_rmsd_loss_function(output, target, scale_dict):
 def combined_loss_function(prediction, target, num_shells, alpha=1, beta=1, gamma=1):
     fsc_loss = fsc_loss_function(prediction, target, num_shells)
     rmse_loss = rmse_loss_function(prediction, target)
-    total_loss = alpha * fsc_loss + beta * rmse_loss 
-    return total_loss, fsc_loss, rmse_loss
+    dice_loss = dice_loss_function(prediction, target)
+    total_loss = alpha * fsc_loss + beta * rmse_loss + gamma * dice_loss
+    return total_loss, fsc_loss, rmse_loss, dice_loss
 
 
 def check_distributions(trainLoader, testLoader, num_shells=20):
