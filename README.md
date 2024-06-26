@@ -14,5 +14,3 @@ CryoJAM automates the fitting of protein homologs into cryo-electron microscopy 
 git clone https://github.com/jtcarrion/CryoJAM.git
 ```
 
-![image](https://github.com/jtcarrion/CryoJAM/nice_fir.png)
-
