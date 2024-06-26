@@ -1,10 +1,10 @@
-## ideally, you just call this function with a sample config file and a checkpoint file, and it runs and saves all your output to a file
 import torch
 import numpy as np
 import h5py
-from .cryodataset import CryoDataNew # TODO: change
+from .cryodataset import CryoDataNew 
 import torch
 from torch.utils.data import DataLoader, random_split
+from .utils.postprocess import save_pdb
 from .utils.loss_utils import check_distributions, combined_loss_function, calculate_subset_fsc_losses, update_fsc_loss_dict
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,10 +12,10 @@ from tqdm import tqdm
 from .unet_model import UNet
 
 
-def train(dataset_path: str = '/MIT/Project/GenAi_Project/data/20240512_cryo_data_with_scales_and_chains.h5', 
+def train(dataset_path: str = './', 
           seed: int = 42, 
           device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-          checkpoint_file: str = "../../ckpt/sample.pth",
+          checkpoint_file: str = "./ckpt/sample.pth",
           shells: int = 20,
           num_epochs: int = 25, 
           lr: float = .001,
@@ -24,20 +24,17 @@ def train(dataset_path: str = '/MIT/Project/GenAi_Project/data/20240512_cryo_dat
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    # TODO: move this, we should do the data split elsewhere. If the H5 allows it we should repackage accordingly?
+                   
     ##### Dataset ########
-
     dataset_size = len(dataset)
     train_size = int(0.9 * dataset_size)  # 90% for training
     test_size = dataset_size - train_size  # 10% for testing
-    
     train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
     
     # Data loaders for both train and test sets
     train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
-    
     print(f'Using device: {device}')
     model = UNet().to(device)
     print(f"Number of Epochs to Run: {num_epochs}")
@@ -54,9 +51,7 @@ def train(dataset_path: str = '/MIT/Project/GenAi_Project/data/20240512_cryo_dat
                       }
 
     # checkpoint_file_name = '20240513_checkpoint_20shells_20epochs_copycat.pth' # change
-
     # Training loop
-
     for epoch in range(num_epochs):
         model.train()
         with tqdm(total=len(train_loader), desc=f"Epoch {epoch + 1}/{num_epochs}") as pbar:
@@ -67,7 +62,6 @@ def train(dataset_path: str = '/MIT/Project/GenAi_Project/data/20240512_cryo_dat
                 voxel_mask = batch["chain_voxel_mask"].to(device)
                 name=batch["name"][0]
                 
-                
                 # Stack the arrays along a new dimension to create a tensor of shape 2x64x64x64
                 inputs = torch.stack((homolog_ca, true_vol), dim=1)
                 
@@ -76,9 +70,8 @@ def train(dataset_path: str = '/MIT/Project/GenAi_Project/data/20240512_cryo_dat
         
                 # Compute the predictions corresponding to the homolog_ca array
                 homolog_ca_predictions = outputs[:, :1, :, :, :]
-                # TODO: this is hard coded
-                assert homolog_ca_predictions.squeeze().shape == (64,64,64), "Batch included in dimensions, may cause loss issue"
-                assert true_ca.squeeze().shape == (64,64,64), "Batch included in dimensions, may cause loss issue"
+                assert homolog_ca_predictions.squeeze().shape == (64,64,64), 
+                assert true_ca.squeeze().shape == (64,64,64), 
     
                 homolog_ca_predictions = homolog_ca_predictions.squeeze()
                 true_ca = true_ca.squeeze()
@@ -115,26 +108,35 @@ def train(dataset_path: str = '/MIT/Project/GenAi_Project/data/20240512_cryo_dat
             }, checkpoint_file_name)
             
     
+def main(args):
+    torch.manual_seed(args.seed)
+    dataset = CryoDataNew(args.dataset_path)  
+    model = UNet(shells=args.num_shells) 
+    model.load_state_dict(torch.load(args.checkpoint_file, map_location=args.device))
+    model.to(args.device)
+    model.eval()
 
+    with torch.no_grad():
+        for data in dataset:
+            inputs = data['inputs'].to(args.device)
+            outputs = model(inputs)
+            homolog_ca_predictions = outputs[:, :1, :, :, :].squeeze()
+            save_pdb(homolog_ca_predictions)
+            calculate_subset_fsc_losses(homolog_ca_predictions) 
+            check_distributions(homolog_ca_predictions)
 
 
 if __name__ == "__main__":
-    # TODO: take in config file, add arguments from file, and load accordingly 
-    # arguments to add:
-    # train path, default is below
-    # seed, default 42?
-    # should the seed be used to determine both train/test split AND training, or should train/test split be done before?
-    # Probably the latter, so TODO do that lol
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset-path", default='/MIT/Project/GenAi_Project/data/20240512_cryo_data_with_scales_and_chains.h5') # TODO: might not be the right file path, need to fix
+    parser.add_argument("--dataset-path", default='./')
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--seed",default=42)
-    parser.add_argument("--num-shells",default=20)
-    parser.add_argument("--num-epochs",default=25)
-    parser.add_argument("--lr",default=0.001)
-    parser.add_argument("--checkpoint-file", default="../../ckpt/sample.pth")
+    parser.add_argument("--seed", default=42)
+    parser.add_argument("--num-shells", default=20)
+    parser.add_argument("--num-epochs", default=25)
+    parser.add_argument("--lr", default=0.001)
+    parser.add_argument("--checkpoint-file", default="./ckpt/sample.pth")
 
-
+    args = parser.parse_args()
     main(args)
 
    
