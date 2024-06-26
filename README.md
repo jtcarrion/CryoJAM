@@ -4,6 +4,7 @@ CryoJAM automates the fitting of protein homologs into cryo-electron microscopy 
 
 ## File structure:
 `/cryojam`: src code  
+`/cryojam/utils`: Utility files for CryoJAM  
 `/data`: Data required for testing  
 `/ckpt`: Model weights saved at various checkpoints  
 `/analysis`: Notebooks for analysis to compare varirous models and ablation studies  
