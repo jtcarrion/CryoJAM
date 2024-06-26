@@ -14,3 +14,6 @@ CryoJAM automates the fitting of protein homologs into cryo-electron microscopy 
 git clone https://github.com/jtcarrion/CryoJAM.git
 ```
 
+## Use case:
+Below we can see two specifc helices from the eukaryotic replicative CMG helicase in S. cerevisiae (PDB: 3JC5 at ~800kDa) being optimally fit into the experintal density of a different CMG helicase (EMD-3318 at ~5A). The tan PDB structure is before CryoJAM and the blue PDB is the predicted structre from CryoJAM.
+<img src="nice_fit.png" width="500"/>
