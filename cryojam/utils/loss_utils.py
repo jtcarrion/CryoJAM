@@ -46,6 +46,7 @@ def calculate_rmse(vol1, vol2):
 
 
 def calculate_dice(prediction, target):
+    smooth = 1e-6  # Small constant to prevent division by zero
     intersection = torch.sum(prediction * target)
     union = torch.sum(prediction) + torch.sum(target)
     dice = (2. * intersection + smooth) / (union + smooth)
@@ -142,7 +143,7 @@ def rmse_loss_function(prediction, target):
     return calculate_rmse(prediction, target)
 
 def dice_loss_function(prediction, target):
-    return 1 - scalculate_dice(prediction, target)
+    return 1 - calculate_dice(prediction, target)
 
 def cosine_similarity_loss_function(output, target):
     output_flat = output.view(output.size(0), -1)
@@ -187,5 +188,4 @@ def check_distributions(trainLoader, testLoader, num_shells=20):
         test_rmsd.append(rmsd_value)
 
     return train_fsc, train_rmsd, test_fsc, test_rmsd
-
     

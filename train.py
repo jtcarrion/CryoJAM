@@ -1,15 +1,16 @@
 import torch
 import numpy as np
 import h5py
-from .cryodataset import CryoDataNew 
+import argparse
+from cryodataset import CryoDataNew 
 import torch
 from torch.utils.data import DataLoader, random_split
-from .utils.postprocess import save_pdb
-from .utils.loss_utils import check_distributions, combined_loss_function, calculate_subset_fsc_losses, update_fsc_loss_dict
+from cryojam.utils.postprocess import save_pdb
+from cryojam.utils.loss_utils import check_distributions, combined_loss_function, calculate_subset_fsc_losses, update_fsc_loss_dict
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm  
-from .unet_model import UNet
+from unet_model import UNet
 
 
 def train(dataset_path: str = './', 
@@ -20,7 +21,7 @@ def train(dataset_path: str = './',
           num_epochs: int = 25, 
           lr: float = .001,
          ):
-    dataset = CryoDataNew(train_path)
+    dataset = CryoDataNew(dataset_path)
     np.random.seed(seed)
     torch.manual_seed(seed)
 
@@ -50,7 +51,7 @@ def train(dataset_path: str = './',
                        "box_non_chain": dict()
                       }
 
-    # checkpoint_file_name = '20240513_checkpoint_20shells_20epochs_copycat.pth' # change
+    checkpoint_file_name = checkpoint_file
     # Training loop
     for epoch in range(num_epochs):
         model.train()
@@ -70,8 +71,8 @@ def train(dataset_path: str = './',
         
                 # Compute the predictions corresponding to the homolog_ca array
                 homolog_ca_predictions = outputs[:, :1, :, :, :]
-                assert homolog_ca_predictions.squeeze().shape == (64,64,64), 
-                assert true_ca.squeeze().shape == (64,64,64), 
+                assert homolog_ca_predictions.squeeze().shape == (64,64,64), "Prediction shape mismatch"
+                assert true_ca.squeeze().shape == (64,64,64), "Target shape mismatch"
     
                 homolog_ca_predictions = homolog_ca_predictions.squeeze()
                 true_ca = true_ca.squeeze()
@@ -111,14 +112,14 @@ def train(dataset_path: str = './',
 def main(args):
     torch.manual_seed(args.seed)
     dataset = CryoDataNew(args.dataset_path)  
-    model = UNet(shells=args.num_shells) 
+    model = UNet() 
     model.load_state_dict(torch.load(args.checkpoint_file, map_location=args.device))
     model.to(args.device)
     model.eval()
 
     with torch.no_grad():
         for data in dataset:
-            inputs = data['inputs'].to(args.device)
+            inputs = torch.stack((data['homolog_ca'], data['true_vol']), dim=1).to(args.device)
             outputs = model(inputs)
             homolog_ca_predictions = outputs[:, :1, :, :, :].squeeze()
             save_pdb(homolog_ca_predictions)
