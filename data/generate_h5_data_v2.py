@@ -140,6 +140,12 @@ def parse_ca_atoms(pdb_filename, chain_selected=None):
         ca_atoms = [residue['CA'].get_coord() for model in structure for chain in model for residue in chain if 'CA' in residue and chain.id == chain_selected]
     return np.array(ca_atoms)
 
+def parse_all_atoms(pdb_filename):
+    parser = PDBParser()
+    structure = parser.get_structure('PDB', pdb_filename)
+    all_atoms = [atom.get_coord() for model in structure for chain in model for residue in chain for atom in residue]
+    return np.array(all_atoms)
+
 def rescale_3d_array(data, target_shape=(64, 64, 64)):
     """
     Parameters:
@@ -286,13 +292,13 @@ def preprocess_and_save(backbone_dir, homolog_dir, emdb_dir, mapping_file, outpu
 if __name__ == "__main__":
     
     # Example usage
-    backbone_dir = '../data/backbones'
-    homolog_dir = '../data/full_pdb_homologs_new'
-    emdb_dir = '../data/emdb_maps'  # Directory containing .map files
-    mapping_file = '../data/emdb_pdb_mapping.xlsx'  # Excel file with EMDB-PDB mapping
-    output_file = './data/20240512_cryo_data_with_scales_and_chains.h5'
+    pdb_dir = './pdb_files'
+    homolog_dir = './homologs'
+    emdb_dir = './emdb_maps'  # Directory containing .map files
+    mapping_file = './pdb_emdb_ids.xlsx'  # Excel file with EMDB-PDB mapping
+    output_file = './20250713_cryo_data.h5'
     
-    matched_files, missing_pairs = match_files_with_emdb(backbone_dir, homolog_dir, emdb_dir, mapping_file)
+    matched_files, missing_pairs = match_files_with_emdb(pdb_dir, homolog_dir, emdb_dir, mapping_file)
     print("No. of Matched Files:", len(matched_files))
     print("No. of Missing Pairs:", len(missing_pairs))
-    preprocess_and_save(backbone_dir, homolog_dir, emdb_dir, mapping_file, output_file)
+    preprocess_and_save(pdb_dir, homolog_dir, emdb_dir, mapping_file, output_file)
