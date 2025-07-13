@@ -1,7 +1,6 @@
 '''
-This file creates a data_list (list of dicts): A list where each element is a dictionary
-with keys 'true_ca', 'homolog_ca', 'true_vol',
-and save them into an H5 file
+This file creates two H5 files: backbone and all-atom representations
+organized by EMDB ID with multiple homolog types
 '''
 import os
 import re
@@ -66,8 +65,8 @@ def list_em_maps(directory):
     map_files.sort()
     return map_files
 
-def match_files_with_emdb(backbone_dir, homolog_dir, emdb_dir, mapping_file):
-    """ Match files from three directories based on the mapping file. """
+def match_files_with_emdb(pdb_dir, homolog_dir, emdb_dir, mapping_file):
+    """ Match files from directories based on the mapping file, organized by EMDB ID. """
     # Read mapping file
     if mapping_file.endswith('.xlsx'):
         df = pd.read_excel(mapping_file)
@@ -77,56 +76,76 @@ def match_files_with_emdb(backbone_dir, homolog_dir, emdb_dir, mapping_file):
     # Normalize column names
     df.columns = [c.strip().upper().replace(" ", "_") for c in df.columns]
     
-    backbone_files = list_sorted_pdbs(backbone_dir)
+    print("[DEBUG] First 5 rows of mapping file:")
+    print(df.head())
+    print("[DEBUG] First 5 PDB IDs from mapping file:", df["PDB"].head().tolist() if "PDB" in df.columns else "No PDB column")
+    print("[DEBUG] First 5 EMDB IDs from mapping file:", df["EMDB"].head().tolist() if "EMDB" in df.columns else "No EMDB column")
+    
+    pdb_files = list_sorted_pdbs(pdb_dir)
     homolog_files = list_sorted_pdbs(homolog_dir)
     em_maps = list_em_maps(emdb_dir) if emdb_dir else []
 
-    backbone_dict = {f.split('_')[0]: f for f in backbone_files}
-    homolog_dict = {}
+    pdb_dict = {f.split('_')[0].replace('.pdb', '').lower(): f for f in pdb_files}
     
-    # Only use hinge motion homologs (_perturbed2.pdb files)
+    # Create homolog dictionary with all three types
+    homolog_dict = {}
     for f in homolog_files:
-        if '_perturbed2.pdb' in f:
-            base_name = f.split('_perturbed2.pdb')[0]
-            homolog_dict[base_name] = f
+        if '_perturbed1.pdb' in f:
+            base_name = f.split('_perturbed1.pdb')[0].lower()
+            if base_name not in homolog_dict:
+                homolog_dict[base_name] = {}
+            homolog_dict[base_name]['perturbed1'] = f
+        elif '_perturbed2.pdb' in f:
+            base_name = f.split('_perturbed2.pdb')[0].lower()
+            if base_name not in homolog_dict:
+                homolog_dict[base_name] = {}
+            homolog_dict[base_name]['perturbed2'] = f
+        elif '_complex.pdb' in f:
+            base_name = f.split('_complex.pdb')[0].lower()
+            if base_name not in homolog_dict:
+                homolog_dict[base_name] = {}
+            homolog_dict[base_name]['complex'] = f
 
-    # Create EM map dictionary
     em_dict = {}
     for f in em_maps:
-        # Extract EMDB ID from filename (e.g., emd_1234.map -> 1234)
         if f.startswith('emd_') and f.endswith('.map'):
-            emdb_id = f[4:-4]  # Remove 'emd_' prefix and '.map' suffix
+            emdb_id = f[4:-4]
             em_dict[emdb_id] = f
+    
+    print("[DEBUG] First 5 keys in pdb_dict:", list(pdb_dict.keys())[:5])
+    print("[DEBUG] First 5 keys in homolog_dict:", list(homolog_dict.keys())[:5])
+    print("[DEBUG] First 5 keys in em_dict:", list(em_dict.keys())[:5])
 
     matched_files = []
     missing_pairs = []
 
-    for _, row in df.iterrows():
-        pdb_id = str(row.get("PDB_ID", "")).strip()
-        emdb_id = str(row.get("EMDB_ID", "")).strip()
+    for idx, row in df.iterrows():
+        pdb_id = str(row.get("PDB", "")).strip().lower()
+        emdb_id = str(row.get("EMDB", "")).strip()
         
-        if not pdb_id:
+        if not pdb_id or not emdb_id:
             continue
-            
-        # Find corresponding files
-        backbone_file = backbone_dict.get(pdb_id)
-        homolog_file = homolog_dict.get(pdb_id)
-        em_map_file = em_dict.get(emdb_id) if emdb_id else None
         
-        if backbone_file and homolog_file:
+        pdb_file = pdb_dict.get(pdb_id)
+        homolog_files_for_pdb = homolog_dict.get(pdb_id, {})
+        em_map_file = em_dict.get(emdb_id)
+        
+        print(f"[DEBUG] Row {idx}: pdb_id={pdb_id}, emdb_id={emdb_id}, pdb_file={'FOUND' if pdb_file else 'MISSING'}, em_map_file={'FOUND' if em_map_file else 'MISSING'}, homolog_files={list(homolog_files_for_pdb.keys()) if homolog_files_for_pdb else 'MISSING'}")
+        
+        if pdb_file and em_map_file:
             matched_files.append({
-                'pdb_id': pdb_id,
                 'emdb_id': emdb_id,
-                'backbone_file': backbone_file,
-                'homolog_file': homolog_file,
+                'pdb_id': pdb_id,
+                'pdb_file': pdb_file,
+                'homolog_files': homolog_files_for_pdb,
                 'em_map_file': em_map_file
             })
         else:
             missing_pairs.append({
-                'pdb_id': pdb_id,
                 'emdb_id': emdb_id,
-                'backbone_file': backbone_file,
-                'homolog_file': homolog_file,
+                'pdb_id': pdb_id,
+                'pdb_file': pdb_file,
+                'homolog_files': homolog_files_for_pdb,
                 'em_map_file': em_map_file
             })
 
@@ -199,94 +218,88 @@ def coords_to_binary_grid(coords, grid_size=(64, 64, 64)):
 
     return scale, grid
 
-def get_voxel_mask(chain_true_ca_coords, scale, padding=4, grid_size=(64, 64, 64)):
-    # apply the scale to the coordinates:
-    grid = np.zeros(grid_size, dtype=np.float32)
-    chain_scale_coords = (chain_true_ca_coords - scale["min_coord"]) * scale["norm"]
-    chain_scale_coords = np.round(chain_scale_coords).astype(int)
-    # pick out min and max:
-    lower = np.min(chain_scale_coords, axis=0) # ok so these aren't scaled??
-    upper = np.max(chain_scale_coords, axis=0)
+def preprocess_and_save(pdb_dir, homolog_dir, emdb_dir, mapping_file, output_name):
+    """Create two H5 files: backbone and all-atom representations."""
     
-    lower_adj = np.max(((0,0,0), lower - padding), axis=0)
-    upper_adj =  np.min((np.array(grid_size) - 1, upper + padding), axis=0)
+    matched_files, missing_pairs = match_files_with_emdb(pdb_dir, homolog_dir, emdb_dir, mapping_file)
     
-    grid[lower_adj[0]:upper_adj[0],
-        lower_adj[1]:upper_adj[1],
-        lower_adj[2]:upper_adj[2]] = 1
-    print(np.sum(grid))
-    return grid
-
-def parse_file_name(homolog_file):
-    pattern = r'chain_(.+)_deg_(\d+)_dir_(\d)'
-    match = re.search(pattern, homolog_file)
-    if match:
-        chain = match.group(1)
-        deg = int(match.group(2))
-        direx = int(match.group(3))
-        return chain, direx, deg
-    else:
-        print("issue", homolog_file)
-        assert 0 == 1, "issue"
-
-def preprocess_and_save(backbone_dir, homolog_dir, emdb_dir, mapping_file, output_file):
-    with h5py.File(output_file, 'w') as f:
-        matched_files, missing_pairs = match_files_with_emdb(backbone_dir, homolog_dir, emdb_dir, mapping_file)
-        
-        print(f"Processing {len(matched_files)} matched files...")
-        print(f"Missing pairs: {len(missing_pairs)}")
+    print(f"Processing {len(matched_files)} matched files...")
+    print(f"Missing pairs: {len(missing_pairs)}")
+    
+    # Create both H5 files
+    backbone_file = f"{output_name}_backbone.h5"
+    allatom_file = f"{output_name}_allAtom.h5"
+    
+    with h5py.File(backbone_file, 'w') as f_backbone, h5py.File(allatom_file, 'w') as f_allatom:
         
         for item in tqdm(matched_files):
-            pdb_id = item['pdb_id']
             emdb_id = item['emdb_id']
-            backbone_file = item['backbone_file']
-            homolog_file = item['homolog_file']
+            pdb_id = item['pdb_id']
+            pdb_file = item['pdb_file']
+            homolog_files = item['homolog_files']
             em_map_file = item['em_map_file']
             
-            true_ca_coords = parse_ca_atoms(os.path.join(backbone_dir, backbone_file))
-            homolog_ca_coords = parse_ca_atoms(os.path.join(homolog_dir, homolog_file))
+            # Parse coordinates
+            backbone_coords = parse_ca_atoms(os.path.join(pdb_dir, pdb_file))
+            all_atom_coords = parse_all_atoms(os.path.join(pdb_dir, pdb_file))
             
-            # Parse homolog filename for chain info
-            try:
-                chain, direx, deg = parse_file_name(homolog_file)
-                print(chain, backbone_file[:-4])
-                chain_coords = parse_ca_atoms(os.path.join(backbone_dir, backbone_file), chain)
-            except:
-                # If parsing fails, use all chains
-                chain_coords = true_ca_coords
-            
-            # Convert coordinates to binary grids
-            true_scale, true_ca = coords_to_binary_grid(true_ca_coords, (64,64,64))
-            chain_true_voxel_mask = get_voxel_mask(chain_coords, true_scale, grid_size = (64,64,64))
-            homolog_scale, homolog_ca = coords_to_binary_grid(homolog_ca_coords)
-            
-            # Use EM density map if available, otherwise create synthetic volume
+            # Process EM map
             if em_map_file and emdb_dir:
                 em_map_path = os.path.join(emdb_dir, em_map_file)
                 em_map = read_em_map(em_map_path)
                 if em_map is not None:
-                    true_vol = downsample_em_map(em_map, (64, 64, 64))
+                    em_volume = downsample_em_map(em_map, (64, 64, 64))
                 else:
-                    _, true_vol = create_gaussian_volume(true_ca)
+                    _, em_volume = create_gaussian_volume(backbone_coords)
             else:
-                _, true_vol = create_gaussian_volume(true_ca)
+                _, em_volume = create_gaussian_volume(backbone_coords)
             
-            grp = f.create_group(backbone_file[:-4])
-            grp.create_dataset('true_ca', data=true_ca)
-            grp.create_dataset('homolog_ca', data=homolog_ca)
-            grp.create_dataset('true_vol', data=true_vol)
-            grp.create_dataset('true_chain_voxel_mask', data=chain_true_voxel_mask)
-            grp.create_dataset('true_scale_norm', data=true_scale["norm"])
-            grp.create_dataset('true_scale_min', data=true_scale["min_coord"])
-            grp.create_dataset('homolog_scale_norm', data=homolog_scale["norm"])
-            grp.create_dataset('homolog_scale_min', data=homolog_scale["min_coord"])
+            # Create groups for both files
+            grp_backbone = f_backbone.create_group(f"EMDB_{emdb_id}")
+            grp_allatom = f_allatom.create_group(f"EMDB_{emdb_id}")
+            
+            # Store ground truth data
+            # Backbone file
+            grp_backbone.create_dataset('ground_truth_coords', data=backbone_coords)  # Raw coordinates
+            true_scale, true_backbone_grid = coords_to_binary_grid(backbone_coords, (64,64,64))
+            grp_backbone.create_dataset('ground_truth_grid', data=true_backbone_grid)  # 64³ grid
+            grp_backbone.create_dataset('em_volume', data=em_volume)  # EM density
+            grp_backbone.create_dataset('scale_norm', data=true_scale["norm"])
+            grp_backbone.create_dataset('scale_min', data=true_scale["min_coord"])
+            
+            # All-atom file
+            grp_allatom.create_dataset('ground_truth_coords', data=all_atom_coords)  # Raw coordinates
+            all_scale, all_atom_grid = coords_to_binary_grid(all_atom_coords, (64,64,64))
+            grp_allatom.create_dataset('ground_truth_grid', data=all_atom_grid)  # 64³ grid
+            grp_allatom.create_dataset('em_volume', data=em_volume)  # EM density
+            grp_allatom.create_dataset('scale_norm', data=all_scale["norm"])
+            grp_allatom.create_dataset('scale_min', data=all_scale["min_coord"])
+            
+            # Process homologs (only 64³ grids, no raw coordinates)
+            for homolog_type in ['perturbed1', 'perturbed2', 'complex']:
+                if homolog_type in homolog_files:
+                    homolog_file = homolog_files[homolog_type]
+                    
+                    # Parse homolog coordinates
+                    homolog_backbone_coords = parse_ca_atoms(os.path.join(homolog_dir, homolog_file))
+                    homolog_all_atom_coords = parse_all_atoms(os.path.join(homolog_dir, homolog_file))
+                    
+                    # Create 64³ grids for homologs
+                    _, homolog_backbone_grid = coords_to_binary_grid(homolog_backbone_coords, (64,64,64))
+                    _, homolog_all_atom_grid = coords_to_binary_grid(homolog_all_atom_coords, (64,64,64))
+                    
+                    # Store in both files
+                    grp_backbone.create_dataset(f'homolog_{homolog_type}', data=homolog_backbone_grid)
+                    grp_allatom.create_dataset(f'homolog_{homolog_type}', data=homolog_all_atom_grid)
             
             # Add metadata
-            grp.attrs['pdb_id'] = pdb_id
-            if emdb_id:
+            for grp in [grp_backbone, grp_allatom]:
                 grp.attrs['emdb_id'] = emdb_id
-            if em_map_file:
-                grp.attrs['em_map_file'] = em_map_file
+                grp.attrs['pdb_id'] = pdb_id
+                grp.attrs['pdb_file'] = pdb_file
+                if em_map_file:
+                    grp.attrs['em_map_file'] = em_map_file
+                grp.attrs['homolog_types'] = list(homolog_files.keys())
 
 
 if __name__ == "__main__":
@@ -296,9 +309,9 @@ if __name__ == "__main__":
     homolog_dir = './homologs'
     emdb_dir = './emdb_maps'  # Directory containing .map files
     mapping_file = './pdb_emdb_ids.xlsx'  # Excel file with EMDB-PDB mapping
-    output_file = './20250713_cryo_data.h5'
+    output_name = './20250713_cryo_data'
     
     matched_files, missing_pairs = match_files_with_emdb(pdb_dir, homolog_dir, emdb_dir, mapping_file)
     print("No. of Matched Files:", len(matched_files))
     print("No. of Missing Pairs:", len(missing_pairs))
-    preprocess_and_save(pdb_dir, homolog_dir, emdb_dir, mapping_file, output_file)
+    preprocess_and_save(pdb_dir, homolog_dir, emdb_dir, mapping_file, output_name)
