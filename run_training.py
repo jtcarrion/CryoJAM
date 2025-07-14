@@ -67,6 +67,7 @@ def main():
     parser.add_argument('--device', type=str, default='auto', help='Device to use (auto, cuda, cpu)')
     parser.add_argument('--save-every', type=int, default=5, help='Save checkpoint every N epochs')
     parser.add_argument('--save-best', action='store_true', help='Save best model based on validation loss')
+    parser.add_argument('--checkpoint', type=str, default=None, help='Path to a checkpoint .pth file to resume training from (optional)')
     args = parser.parse_args()
     
     # Set device
@@ -120,7 +121,8 @@ def main():
             save_every=args.save_every,
             save_best=args.save_best,
             training_history=training_history,
-            best_checkpoint_path=best_checkpoint
+            best_checkpoint_path=best_checkpoint,
+            resume_checkpoint=args.checkpoint
         )
         
         # Save final training history
@@ -132,15 +134,15 @@ def main():
             print(f"Best model saved to: {best_checkpoint}")
         print(f"Training history saved to: {history_file}")
         
-        # Test loading the best model
-        if args.save_best and os.path.exists(best_checkpoint):
-            print("\nTesting best model loading...")
+        # Test loading the best model or a specific checkpoint
+        eval_checkpoint = args.checkpoint if args.checkpoint is not None else best_checkpoint
+        if os.path.exists(eval_checkpoint):
+            print(f"\nTesting model loading from: {eval_checkpoint}")
             model = UNet()
-            load_checkpoint(best_checkpoint, model, device=device)
+            load_checkpoint(eval_checkpoint, model, device=device)
             model.to(device)
             model.eval()
-            print("✓ Best model loaded successfully!")
-            
+            print("✓ Model loaded successfully!")
             # Test the model on a sample from test_loader
             with torch.no_grad():
                 for batch in test_loader:
@@ -149,23 +151,21 @@ def main():
                     homolog_3 = batch['homolog_3'].to(device)
                     true_vol = batch['syn_density'].to(device)
                     true_ca = batch['gt_voxel'].to(device)
-                    
                     # Stack inputs
                     inputs = torch.stack((homolog_1, homolog_2, homolog_3, true_vol), dim=1)
-                    
                     # Get model output
                     output = model(inputs)
                     homolog_ca_predictions = output[:, :1, :, :, :].squeeze()
-                    
                     # Calculate losses
                     combo_loss, fsc_loss, rmse_loss, _ = combined_loss_function(
                         homolog_ca_predictions, true_ca.squeeze(), args.shells, g=0
                     )
-                    
                     print(f"Test sample - Combo loss: {combo_loss.item():.4f}")
                     print(f"Test sample - FSC loss: {fsc_loss.item():.4f}")
                     print(f"Test sample - RMSE loss: {rmse_loss.item():.4f}")
                     break  # Only test on first sample
+        else:
+            print(f"\nNo checkpoint found at {eval_checkpoint} for evaluation")
 
             
     except Exception as e:

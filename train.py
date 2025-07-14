@@ -31,6 +31,7 @@ def train(dataset_path: str = './',
           save_best: bool = True,
           training_history: dict = None,
           best_checkpoint_path: str = None,
+          resume_checkpoint: str = None,
          ):
     
     # Clear GPU memory at start
@@ -65,6 +66,23 @@ def train(dataset_path: str = './',
     
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     
+    # Load checkpoint if provided
+    start_epoch = 0
+    if resume_checkpoint is not None and os.path.exists(resume_checkpoint):
+        print(f"Resuming training from checkpoint: {resume_checkpoint}")
+        checkpoint = torch.load(resume_checkpoint, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        start_epoch = checkpoint['epoch']
+        print(f"Resuming from epoch {start_epoch}")
+        
+        # Update training history if available
+        if training_history is not None and 'combo_loss' in checkpoint:
+            training_history['best_loss'] = checkpoint['combo_loss']
+            training_history['best_epoch'] = start_epoch
+    else:
+        print("Starting training from scratch")
+    
     fsc_loss_train_values = []
     rmse_loss_train_values = []
     combined_loss_values = []
@@ -79,7 +97,7 @@ def train(dataset_path: str = './',
     best_loss = float('inf')
     best_epoch = 0
     
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, num_epochs):
         model.train()
         epoch_losses = []
         epoch_fsc_losses = []
