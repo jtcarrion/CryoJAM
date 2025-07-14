@@ -33,7 +33,7 @@ def save_checkpoint(model, optimizer, epoch, combo_l, fsc_l, rmse_l, metrics, fi
 
 def load_checkpoint(filepath, model, optimizer=None, device='cuda'):
     """Load model checkpoint with metadata."""
-    checkpoint = torch.load(filepath, map_location=device)
+    checkpoint = torch.load(filepath, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
     if optimizer is not None:
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
