@@ -2,15 +2,16 @@ import torch
 import numpy as np
 import h5py
 import argparse
-from cryodataset import CryoDataNew 
+from data.CryoData import CryoDataBackbone 
 import torch
 from torch.utils.data import DataLoader, random_split
 from cryojam.utils.postprocess import save_pdb
-from cryojam.utils.loss_utils import check_distributions, combined_loss_function, calculate_subset_fsc_losses, update_fsc_loss_dict
+from cryojam.utils.loss_utils import check_distributions, combined_loss_function, fsc_loss_function, calculate_subset_fsc_losses, update_fsc_loss_dict, calculate_full_protein_fsc_loss
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm  
 from unet_model import UNet
+import os
 
 
 def train(dataset_path: str = './', 
@@ -18,18 +19,18 @@ def train(dataset_path: str = './',
           device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
           checkpoint_file: str = "./ckpt/sample.pth",
           shells: int = 20,
-          num_epochs: int = 25, 
+          num_epochs: int = 5, 
           lr: float = .001,
          ):
-    dataset = CryoDataNew(dataset_path)
+    dataset = CryoDataBackbone(dataset_path)
     np.random.seed(seed)
     torch.manual_seed(seed)
 
                    
     ##### Dataset ########
     dataset_size = len(dataset)
-    train_size = int(0.9 * dataset_size)  # 90% for training
-    test_size = dataset_size - train_size  # 10% for testing
+    train_size = int(0.95 * dataset_size)  # 95% for training
+    test_size = dataset_size - train_size  # 5% for testing
     train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
     
     # Data loaders for both train and test sets
@@ -57,14 +58,19 @@ def train(dataset_path: str = './',
         model.train()
         with tqdm(total=len(train_loader), desc=f"Epoch {epoch + 1}/{num_epochs}") as pbar:
             for i, batch in enumerate(train_loader):
-                homolog_ca = batch['homolog_ca'].to(device)
-                true_vol = batch['true_vol'].to(device)
-                true_ca = batch['true_ca'].to(device)
-                voxel_mask = batch["chain_voxel_mask"].to(device)
-                name=batch["name"][0]
+                homolog_1 = batch['homolog_1'].to(device)
+                homolog_2 = batch['homolog_2'].to(device)
+                homolog_3 = batch['homolog_3'].to(device)
+
+                true_vol = batch['syn_density'].to(device)
+                true_ca = batch['gt_voxel'].to(device)
+                # Chain mask is optional - use synthetic density as natural mask
+                voxel_mask = batch.get("chain_voxel_mask", None)
+                if voxel_mask is not None:
+                    voxel_mask = voxel_mask.to(device)
                 
-                # Stack the arrays along a new dimension to create a tensor of shape 2x64x64x64
-                inputs = torch.stack((homolog_ca, true_vol), dim=1)
+                # Stack the arrays along a new dimension to create a tensor of shape 4x64x64x64
+                inputs = torch.stack((homolog_1, homolog_2, homolog_3, true_vol), dim=1)
                 
                 optimizer.zero_grad()
                 outputs = model(inputs)
@@ -76,19 +82,21 @@ def train(dataset_path: str = './',
     
                 homolog_ca_predictions = homolog_ca_predictions.squeeze()
                 true_ca = true_ca.squeeze()
-                voxel_mask = voxel_mask.squeeze()
-                combined_loss, fsc_loss_value, rmse_loss = combined_loss_function(homolog_ca_predictions.squeeze(), 
-                                                                                  true_ca.squeeze(), shells)
+                
+                combined_loss, fsc_loss_value, rmse_loss, _ = combined_loss_function(homolog_ca_predictions.squeeze(), 
+                                                                                  true_ca.squeeze(), shells, g=0)
                 combined_loss.backward()
                 optimizer.step()
     
-                fsc_loss_calcs = calculate_subset_fsc_losses(homolog_ca_predictions, true_ca, voxel_mask, shells)
+                # Optional: Calculate subset FSC losses if chain mask is available
+                if voxel_mask is not None:
+                    voxel_mask = voxel_mask.squeeze()
+                    fsc_loss_calcs = calculate_subset_fsc_losses(homolog_ca_predictions, true_ca, voxel_mask, shells)
+                    update_fsc_loss_dict(*fsc_loss_calcs, batch['name'], fsc_loss_values)
     
                 fsc_loss_train_values.append(fsc_loss_value.item())
                 rmse_loss_train_values.append(rmse_loss.item())
                 combined_loss_values.append(combined_loss.item())
-    
-                update_fsc_loss_dict(*fsc_loss_calcs, batch['name'], fsc_loss_values)
     
                 # Update the progress bar
                 pbar.set_postfix({'loss': combined_loss.item()})
@@ -110,21 +118,45 @@ def train(dataset_path: str = './',
             
     
 def main(args):
-    torch.manual_seed(args.seed)
-    dataset = CryoDataNew(args.dataset_path)  
+    torch.manual_seed(args.seed)  
+    train(args.dataset_path, seed = 42, device = torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+
+    '''
+    train_loader = DataLoader(dataset, batch_size=1, shuffle=True)
     model = UNet() 
-    model.load_state_dict(torch.load(args.checkpoint_file, map_location=args.device))
+    if os.path.exists(args.checkpoint_file):
+        model.load_state_dict(torch.load(args.checkpoint_file, map_location=args.device))
+        print(f"Loaded checkpoint from {args.checkpoint_file}")
+    else:
+        print(f"No checkpoint found at {args.checkpoint_file}, starting from scratch.")
     model.to(args.device)
     model.eval()
 
     with torch.no_grad():
-        for data in dataset:
-            inputs = torch.stack((data['homolog_ca'], data['true_vol']), dim=1).to(args.device)
+        for batch in train_loader:
+            # Move all tensors to the correct device
+            device = torch.device(args.device)
+            
+            homolog_1 = batch['homolog_1'].squeeze().to(device)
+            homolog_2 = batch['homolog_2'].squeeze().to(device)
+            homolog_3 = batch['homolog_3'].squeeze().to(device)
+            syn_density = batch['syn_density'].squeeze().to(device)
+            gt_voxel = batch['gt_voxel'].squeeze().to(device)
+            
+            inputs = torch.stack((
+                homolog_1, homolog_2, homolog_3, syn_density
+            ), dim=0).unsqueeze(0).to(device)  # Add batch dimension back
+            
             outputs = model(inputs)
             homolog_ca_predictions = outputs[:, :1, :, :, :].squeeze()
-            save_pdb(homolog_ca_predictions)
-            calculate_subset_fsc_losses(homolog_ca_predictions) 
+            
+            # Calculate FSC loss with GPU tensors
+            fsc_loss = fsc_loss_function(homolog_ca_predictions, gt_voxel) 
+            print(f"FSC Loss: {fsc_loss.item():.4f}")
+            
+            # Check distributions (ensure GPU compatibility)
             check_distributions(homolog_ca_predictions)
+    '''
 
 
 if __name__ == "__main__":
