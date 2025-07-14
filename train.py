@@ -3,6 +3,7 @@ import numpy as np
 import h5py
 import argparse
 import os
+from datetime import datetime
 
 # Set memory management environment variable
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
@@ -26,6 +27,10 @@ def train(dataset_path: str = './',
           shells: int = 20,
           num_epochs: int = 5, 
           lr: float = .001,
+          save_every: int = 5,
+          save_best: bool = True,
+          training_history: dict = None,
+          best_checkpoint_path: str = None,
          ):
     
     # Clear GPU memory at start
@@ -71,8 +76,15 @@ def train(dataset_path: str = './',
 
     checkpoint_file_name = checkpoint_file
     # Training loop
+    best_loss = float('inf')
+    best_epoch = 0
+    
     for epoch in range(num_epochs):
         model.train()
+        epoch_losses = []
+        epoch_fsc_losses = []
+        epoch_rmse_losses = []
+        
         with tqdm(total=len(train_loader), desc=f"Epoch {epoch + 1}/{num_epochs}") as pbar:
             for i, batch in enumerate(train_loader):
                 homolog_1 = batch['homolog_1'].to(device)
@@ -116,27 +128,80 @@ def train(dataset_path: str = './',
                     fsc_loss_calcs = calculate_subset_fsc_losses(homolog_ca_predictions, true_ca, voxel_mask, shells)
                     update_fsc_loss_dict(*fsc_loss_calcs, batch['name'], fsc_loss_values)
     
-                fsc_loss_train_values.append(fsc_loss_value.item())
-                rmse_loss_train_values.append(rmse_loss.item())
-                combined_loss_values.append(combined_loss.item())
+                # Track losses for this epoch
+                epoch_losses.append(combined_loss.item())
+                epoch_fsc_losses.append(fsc_loss_value.item())
+                epoch_rmse_losses.append(rmse_loss.item())
     
                 # Update the progress bar
                 pbar.set_postfix({'loss': combined_loss.item()})
                 pbar.update(1)
-                    
-            # Log for each epoch
-            print(f"Finished Epoch #{epoch+1}")
-            print(f"Average FSC Loss: {np.array(fsc_loss_train_values).mean():.4f}")
-            print(f"Average RMSE: {np.array(rmse_loss_train_values).mean():.4f}")
-            print(f"Combined Loss: {np.array(combined_loss_values).mean():.4f}")
         
-            # Save training data
+        # Calculate epoch averages
+        avg_loss = np.mean(epoch_losses)
+        avg_fsc_loss = np.mean(epoch_fsc_losses)
+        avg_rmse_loss = np.mean(epoch_rmse_losses)
+        
+        # Update training history
+        if training_history is not None:
+            training_history['epochs'].append(epoch + 1)
+            training_history['train_loss'].append(avg_loss)
+            training_history['fsc_loss'].append(avg_fsc_loss)
+            training_history['rmse_loss'].append(avg_rmse_loss)
+            
+            # Check if this is the best model so far
+            if avg_loss < training_history['best_loss']:
+                training_history['best_loss'] = avg_loss
+                training_history['best_epoch'] = epoch + 1
+                best_loss = avg_loss
+                best_epoch = epoch + 1
+                
+                # Save best model
+                if save_best and best_checkpoint_path is not None:
+                    torch.save({
+                        'epoch': epoch + 1,
+                        'model_state_dict': model.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'loss': avg_loss,
+                        'metrics': {
+                            'fsc_loss': avg_fsc_loss,
+                            'rmse_loss': avg_rmse_loss
+                        },
+                        'timestamp': datetime.now().isoformat(),
+                        'training_config': {
+                            'learning_rate': lr,
+                            'epoch': epoch + 1
+                        }
+                    }, best_checkpoint_path)
+                    print(f"🏆 New best model saved! Loss: {avg_loss:.4f}")
+                    
+        # Log for each epoch
+        print(f"Finished Epoch #{epoch+1}")
+        print(f"Average FSC Loss: {avg_fsc_loss:.4f}")
+        print(f"Average RMSE: {avg_rmse_loss:.4f}")
+        print(f"Combined Loss: {avg_loss:.4f}")
+        if save_best and avg_loss == best_loss:
+            print(f"🎯 Best model so far! (Epoch {epoch+1})")
+        
+        # Save checkpoint every N epochs
+        if (epoch + 1) % save_every == 0 or epoch == num_epochs - 1:
+            checkpoint_path = f"{checkpoint_file}_epoch_{epoch+1}.pth"
             torch.save({
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'loss': combined_loss,
-            }, checkpoint_file_name)
+                'epoch': epoch + 1,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': avg_loss,
+                'metrics': {
+                    'fsc_loss': avg_fsc_loss,
+                    'rmse_loss': avg_rmse_loss
+                },
+                'timestamp': datetime.now().isoformat(),
+                'training_config': {
+                    'learning_rate': lr,
+                    'epoch': epoch + 1
+                }
+            }, checkpoint_path)
+            print(f"💾 Checkpoint saved: {checkpoint_path}")
             
     
 def main(args):
