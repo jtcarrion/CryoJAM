@@ -162,7 +162,9 @@ def train(dataset_path: str = './',
                         'epoch': epoch + 1,
                         'model_state_dict': model.state_dict(),
                         'optimizer_state_dict': optimizer.state_dict(),
-                        'loss': avg_loss,
+                        'combo_loss': avg_loss,
+                        'fsc_loss': avg_fsc_loss,
+                        'rmse_loss': avg_rmse_loss,
                         'metrics': {
                             'fsc_loss': avg_fsc_loss,
                             'rmse_loss': avg_rmse_loss
@@ -190,7 +192,9 @@ def train(dataset_path: str = './',
                 'epoch': epoch + 1,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'loss': avg_loss,
+                'combo_loss': avg_loss,
+                'fsc_loss': avg_fsc_loss,
+                'rmse_loss': avg_rmse_loss,
                 'metrics': {
                     'fsc_loss': avg_fsc_loss,
                     'rmse_loss': avg_rmse_loss
@@ -202,6 +206,8 @@ def train(dataset_path: str = './',
                 }
             }, checkpoint_path)
             print(f"💾 Checkpoint saved: {checkpoint_path}")
+
+    return test_loader
             
     
 def main(args):

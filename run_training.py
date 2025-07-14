@@ -11,6 +11,7 @@ import os
 import json
 from train import train
 from unet_model import UNet
+from cryojam.utils.loss_utils import combined_loss_function
 
 def save_checkpoint(model, optimizer, epoch, combo_l, fsc_l, rmse_l, metrics, filepath):
     """Save model checkpoint with comprehensive metadata."""
@@ -38,8 +39,14 @@ def load_checkpoint(filepath, model, optimizer=None, device='cuda'):
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     
     print(f"✓ Checkpoint loaded from epoch {checkpoint['epoch']}")
-    print(f"  Loss: {checkpoint['loss']:.4f}")
-    print(f"  Timestamp: {checkpoint['timestamp']}")
+    if 'combo_loss' in checkpoint:
+        print(f"  Combo Loss: {checkpoint['combo_loss']:.4f}")
+        print(f"  FSC Loss: {checkpoint['fsc_loss']:.4f}")
+        print(f"  RMSE Loss: {checkpoint['rmse_loss']:.4f}")
+    elif 'loss' in checkpoint:
+        print(f"  Loss: {checkpoint['loss']:.4f}")
+    if 'timestamp' in checkpoint:
+        print(f"  Timestamp: {checkpoint['timestamp']}")
     
     return checkpoint
 
@@ -102,7 +109,7 @@ def main():
         }
         
         # Run training with checkpointing
-        train(
+        test_loader = train(
             dataset_path=args.dataset_path,
             seed=args.seed,
             device=device,
@@ -133,7 +140,34 @@ def main():
             model.to(device)
             model.eval()
             print("✓ Best model loaded successfully!")
-        
+            
+            # Test the model on a sample from test_loader
+            with torch.no_grad():
+                for batch in test_loader:
+                    homolog_1 = batch['homolog_1'].to(device)
+                    homolog_2 = batch['homolog_2'].to(device)
+                    homolog_3 = batch['homolog_3'].to(device)
+                    true_vol = batch['syn_density'].to(device)
+                    true_ca = batch['gt_voxel'].to(device)
+                    
+                    # Stack inputs
+                    inputs = torch.stack((homolog_1, homolog_2, homolog_3, true_vol), dim=1)
+                    
+                    # Get model output
+                    output = model(inputs)
+                    homolog_ca_predictions = output[:, :1, :, :, :].squeeze()
+                    
+                    # Calculate losses
+                    combo_loss, fsc_loss, rmse_loss, _ = combined_loss_function(
+                        homolog_ca_predictions, true_ca.squeeze(), args.shells, g=0
+                    )
+                    
+                    print(f"Test sample - Combo loss: {combo_loss.item():.4f}")
+                    print(f"Test sample - FSC loss: {fsc_loss.item():.4f}")
+                    print(f"Test sample - RMSE loss: {rmse_loss.item():.4f}")
+                    break  # Only test on first sample
+
+            
     except Exception as e:
         print(f"Error during training: {e}")
         raise
