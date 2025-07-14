@@ -10,7 +10,9 @@ from Bio.PDB import PDBParser
 from scipy.ndimage import gaussian_filter
 from scipy.ndimage import zoom
 import h5py
+import random
 from tqdm import tqdm
+
 
 def read_em_map(map_file_path):
     """Read EM density map file and return as numpy array."""
@@ -52,6 +54,58 @@ def downsample_em_map(em_map, target_size=(64, 64, 64)):
         downsampled = (downsampled - min_val) / (max_val - min_val)
     
     return downsampled
+
+def create_synthetic_em_density(all_atom_coords, sigma_range=(3, 8)):
+    """
+    Create synthetic EM density from all-atom coordinates with stochastic sigma.
+    
+    Args:
+        all_atom_coords (np.array): All atom coordinates from PDB
+        sigma_range (tuple): Range for uniform sampling of sigma (min, max)
+    
+    Returns:
+        np.array: Synthetic EM density map (64, 64, 64)
+    """
+    # Sample sigma from uniform distribution
+    sigma = np.random.uniform(sigma_range[0], sigma_range[1])
+    
+    # Create 3D volume from atom coordinates
+    # Initialize a larger volume to accommodate the gaussian spread
+    volume_size = 128  # Start with larger volume
+    volume = np.zeros((volume_size, volume_size, volume_size), dtype=np.float32)
+    
+    # Normalize coordinates to fit in the volume
+    min_coord = np.min(all_atom_coords, axis=0)
+    max_coord = np.max(all_atom_coords, axis=0)
+    
+    # Add padding to ensure atoms don't touch edges
+    padding = 10
+    coord_range = max_coord - min_coord
+    scale_factor = (volume_size - 2 * padding) / np.max(coord_range)
+    
+    # Scale and center coordinates
+    scaled_coords = (all_atom_coords - min_coord) * scale_factor + padding
+    
+    # Place atoms in the volume
+    for coord in scaled_coords:
+        x, y, z = coord.astype(int)
+        if 0 <= x < volume_size and 0 <= y < volume_size and 0 <= z < volume_size:
+            volume[x, y, z] = 1.0
+    
+    # Apply gaussian filter to create density
+    density = gaussian_filter(volume, sigma=sigma)
+    
+    # Downsample to target size (64, 64, 64)
+    zoom_factors = [64 / volume_size] * 3
+    downsampled = zoom(density, zoom_factors, order=1)
+    
+    # Normalize to 0-1 range
+    min_val = np.min(downsampled)
+    max_val = np.max(downsampled)
+    if max_val > min_val:
+        downsampled = (downsampled - min_val) / (max_val - min_val)
+    
+    return downsampled, sigma
 
 def list_sorted_pdbs(directory):
     """ List and sort PDB files by their PDB code. """
@@ -185,38 +239,100 @@ def rescale_3d_array(data, target_shape=(64, 64, 64)):
     return zoom_factors, rescaled_data
 
 def create_gaussian_volume(ca_coords, sigma=3):
-    volume = gaussian_filter(ca_coords, sigma=sigma)
-    scale_factors, volume = rescale_3d_array(volume)
-    min_value = np.min(volume)
-    max_value = np.max(volume)
+    """
+    Create 3D gaussian volume from Cα coordinates.
     
-    # Perform min-max normalization
-    normalized_volume = (volume - min_value) / (max_value - min_value)
-
-    return scale_factors, normalized_volume
+    Args:
+        ca_coords (np.array): Cα atom coordinates
+        sigma (float): Gaussian sigma for blurring
+    
+    Returns:
+        tuple: (zoom_factors, normalized_volume)
+    """
+    # Create 3D volume from coordinates
+    volume_size = 128  # Start with larger volume
+    volume = np.zeros((volume_size, volume_size, volume_size), dtype=np.float32)
+    
+    # Normalize coordinates to fit in the volume
+    min_coord = np.min(ca_coords, axis=0)
+    max_coord = np.max(ca_coords, axis=0)
+    
+    # Add padding to ensure atoms don't touch edges
+    padding = 10
+    coord_range = max_coord - min_coord
+    scale_factor = (volume_size - 2 * padding) / np.max(coord_range)
+    
+    # Scale and center coordinates
+    scaled_coords = (ca_coords - min_coord) * scale_factor + padding
+    
+    # Place atoms in the volume
+    for coord in scaled_coords:
+        x, y, z = coord.astype(int)
+        if 0 <= x < volume_size and 0 <= y < volume_size and 0 <= z < volume_size:
+            volume[x, y, z] = 1.0
+    
+    # Apply gaussian filter to create density
+    density = gaussian_filter(volume, sigma=sigma)
+    
+    # Downsample to target size (64, 64, 64)
+    zoom_factors = [64 / volume_size] * 3
+    downsampled = zoom(density, zoom_factors, order=1)
+    
+    # Normalize to 0-1 range
+    min_val = np.min(downsampled)
+    max_val = np.max(downsampled)
+    if max_val > min_val:
+        downsampled = (downsampled - min_val) / (max_val - min_val)
+    
+    return zoom_factors, downsampled
 
    
 def coords_to_binary_grid(coords, grid_size=(64, 64, 64)):
-    # Normalize coordinates
+    """
+    Create binary grid from coordinates with consistent padding approach.
+    
+    Args:
+        coords (np.array): Atom coordinates
+        grid_size (tuple): Target grid size (default: 64³)
+    
+    Returns:
+        tuple: (scale_dict, binary_grid)
+    """
+    # Use the same approach as synthetic EM density for consistency
+    volume_size = 128  # Start with larger volume like synthetic EM
+    volume = np.zeros((volume_size, volume_size, volume_size), dtype=np.float32)
+    
+    # Normalize coordinates to fit in the volume with padding
     min_coord = np.min(coords, axis=0)
     max_coord = np.max(coords, axis=0)
-
-    norm_coords = (coords - min_coord) / (max_coord - min_coord) * (np.array(grid_size) - 1)
-    scale = {
-        "min_coord" : min_coord,
-        "norm" : 1 / (max_coord - min_coord) * (np.array(grid_size) - 1)
-    }
-    # Initialize the grid
-    grid = np.zeros(grid_size, dtype=np.float32)
     
-    # Convert normalized coordinates to integer indices
-    indices = np.round(norm_coords).astype(int)
-    # Set the corresponding positions in the grid to 1
-    for idx in indices:
-        if all(0 <= idx[i] < grid_size[i] for i in range(3)):  # Ensure index is within grid bounds
-            grid[tuple(idx)] = 1
-
-    return scale, grid
+    # Add padding to ensure atoms don't touch edges (same as synthetic EM)
+    padding = 10
+    coord_range = max_coord - min_coord
+    scale_factor = (volume_size - 2 * padding) / np.max(coord_range)
+    
+    # Scale and center coordinates
+    scaled_coords = (coords - min_coord) * scale_factor + padding
+    
+    # Place atoms in the volume
+    for coord in scaled_coords:
+        x, y, z = coord.astype(int)
+        if 0 <= x < volume_size and 0 <= y < volume_size and 0 <= z < volume_size:
+            volume[x, y, z] = 1.0
+    
+    # Downsample to target size (64, 64, 64)
+    zoom_factors = [64 / volume_size] * 3
+    downsampled = zoom(volume, zoom_factors, order=0)  # Use order=0 to keep binary
+    
+    # Create scale dictionary for consistency
+    scale = {
+        "min_coord": min_coord,
+        "norm": scale_factor,
+        "padding": padding,
+        "volume_size": volume_size
+    }
+    
+    return scale, downsampled
 
 def preprocess_and_save(pdb_dir, homolog_dir, emdb_dir, mapping_file, output_name):
     """Create two H5 files: backbone and all-atom representations."""
@@ -225,6 +341,7 @@ def preprocess_and_save(pdb_dir, homolog_dir, emdb_dir, mapping_file, output_nam
     
     print(f"Processing {len(matched_files)} matched files...")
     print(f"Missing pairs: {len(missing_pairs)}")
+    print("Saving both real and synthetic EM densities for each pair...")
     
     # Create both H5 files
     backbone_file = f"{output_name}_backbone.h5"
@@ -243,16 +360,19 @@ def preprocess_and_save(pdb_dir, homolog_dir, emdb_dir, mapping_file, output_nam
             backbone_coords = parse_ca_atoms(os.path.join(pdb_dir, pdb_file))
             all_atom_coords = parse_all_atoms(os.path.join(pdb_dir, pdb_file))
             
-            # Process EM map
+            # Process real EM map for backbone (if available)
+            real_em_volume_backbone = None
             if em_map_file and emdb_dir:
                 em_map_path = os.path.join(emdb_dir, em_map_file)
                 em_map = read_em_map(em_map_path)
                 if em_map is not None:
-                    em_volume = downsample_em_map(em_map, (64, 64, 64))
-                else:
-                    _, em_volume = create_gaussian_volume(backbone_coords)
-            else:
-                _, em_volume = create_gaussian_volume(backbone_coords)
+                    real_em_volume_backbone = downsample_em_map(em_map, (64, 64, 64))
+            
+            # Generate synthetic EM density for backbone
+            synthetic_em_volume_backbone, backbone_sigma = create_synthetic_em_density(backbone_coords, sigma_range=(3, 8))
+            
+            # Generate synthetic EM density for all-atom
+            synthetic_em_volume_allatom, allatom_sigma = create_synthetic_em_density(all_atom_coords, sigma_range=(3, 8))
             
             # Create groups for both files
             grp_backbone = f_backbone.create_group(f"EMDB_{emdb_id}")
@@ -263,17 +383,26 @@ def preprocess_and_save(pdb_dir, homolog_dir, emdb_dir, mapping_file, output_nam
             grp_backbone.create_dataset('ground_truth_coords', data=backbone_coords)  # Raw coordinates
             true_scale, true_backbone_grid = coords_to_binary_grid(backbone_coords, (64,64,64))
             grp_backbone.create_dataset('ground_truth_grid', data=true_backbone_grid)  # 64³ grid
-            grp_backbone.create_dataset('em_volume', data=em_volume)  # EM density
             grp_backbone.create_dataset('scale_norm', data=true_scale["norm"])
             grp_backbone.create_dataset('scale_min', data=true_scale["min_coord"])
+            
+            # Store both real and synthetic EM densities for backbone
+            grp_backbone.create_dataset('em_volume_synthetic', data=synthetic_em_volume_backbone)  # Synthetic EM density
+            if real_em_volume_backbone is not None:
+                grp_backbone.create_dataset('em_volume_real', data=real_em_volume_backbone)  # Real EM density
             
             # All-atom file
             grp_allatom.create_dataset('ground_truth_coords', data=all_atom_coords)  # Raw coordinates
             all_scale, all_atom_grid = coords_to_binary_grid(all_atom_coords, (64,64,64))
             grp_allatom.create_dataset('ground_truth_grid', data=all_atom_grid)  # 64³ grid
-            grp_allatom.create_dataset('em_volume', data=em_volume)  # EM density
             grp_allatom.create_dataset('scale_norm', data=all_scale["norm"])
             grp_allatom.create_dataset('scale_min', data=all_scale["min_coord"])
+            
+            # Store both real and synthetic EM densities for all-atom
+            grp_allatom.create_dataset('em_volume_synthetic', data=synthetic_em_volume_allatom)  # Synthetic EM density
+            if real_em_volume_backbone is not None:
+                # Use the same real EM map for all-atom (since it's the same structure)
+                grp_allatom.create_dataset('em_volume_real', data=real_em_volume_backbone)  # Real EM density
             
             # Process homologs (only 64³ grids, no raw coordinates)
             for homolog_type in ['perturbed1', 'perturbed2', 'complex']:
@@ -300,16 +429,21 @@ def preprocess_and_save(pdb_dir, homolog_dir, emdb_dir, mapping_file, output_nam
                 if em_map_file:
                     grp.attrs['em_map_file'] = em_map_file
                 grp.attrs['homolog_types'] = list(homolog_files.keys())
+                grp.attrs['has_real_em'] = real_em_volume_backbone is not None
+                if grp == grp_backbone:
+                    grp.attrs['backbone_sigma'] = backbone_sigma
+                else:
+                    grp.attrs['allatom_sigma'] = allatom_sigma
 
 
 if __name__ == "__main__":
     
     # Example usage
-    pdb_dir = './pdb_files'
-    homolog_dir = './homologs'
-    emdb_dir = './emdb_maps'  # Directory containing .map files
-    mapping_file = './pdb_emdb_ids.xlsx'  # Excel file with EMDB-PDB mapping
-    output_name = './20250713_cryo_data'
+    pdb_dir = './data/pdb_files'
+    homolog_dir = './data/homologs'
+    emdb_dir = './data/emdb_maps'  # Directory containing .map files
+    mapping_file = './data/pdb_emdb_ids.xlsx'  # Excel file with EMDB-PDB mapping
+    output_name = './data/20250713_cryo_data'
     
     matched_files, missing_pairs = match_files_with_emdb(pdb_dir, homolog_dir, emdb_dir, mapping_file)
     print("No. of Matched Files:", len(matched_files))
