@@ -13,21 +13,13 @@ from unet_model import UNet
 
 def main():
     parser = argparse.ArgumentParser(description='Train CryoJAM model')
-    parser.add_argument('--dataset-path', type=str, default='./data/training_data.h5',
-                       help='Path to the H5 dataset file')
-    parser.add_argument('--checkpoint-dir', type=str, default='./ckpt',
-                       help='Directory to save checkpoints')
-    parser.add_argument('--num-epochs', type=int, default=25,
-                       help='Number of training epochs')
-    parser.add_argument('--lr', type=float, default=0.001,
-                       help='Learning rate')
-    parser.add_argument('--shells', type=int, default=20,
-                       help='Number of FSC shells')
-    parser.add_argument('--seed', type=int, default=42,
-                       help='Random seed')
-    parser.add_argument('--device', type=str, default='auto',
-                       help='Device to use (auto, cuda, cpu)')
-    
+    parser.add_argument('--dataset-path', type=str, default='./data/training_data.h5', help='Path to the H5 dataset file')
+    parser.add_argument('--checkpoint-dir', type=str, default='./ckpt', help='Directory to save checkpoints')
+    parser.add_argument('--num-epochs', type=int, default=25, help='Number of training epochs')
+    parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
+    parser.add_argument('--shells', type=int, default=20, help='Number of FSC shells')
+    parser.add_argument('--seed', type=int, default=42, help='Random seed')
+    parser.add_argument('--device', type=str, default='auto', help='Device to use (auto, cuda, cpu)')
     args = parser.parse_args()
     
     # Set device
