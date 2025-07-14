@@ -2,6 +2,11 @@ import torch
 import numpy as np
 import h5py
 import argparse
+import os
+
+# Set memory management environment variable
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
 from data.CryoData import CryoDataBackbone 
 import torch
 from torch.utils.data import DataLoader, random_split
@@ -22,6 +27,18 @@ def train(dataset_path: str = './',
           num_epochs: int = 5, 
           lr: float = .001,
          ):
+    
+    # Clear GPU memory at start
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+        
+        # Check available GPU memory
+        gpu_memory = torch.cuda.get_device_properties(0).total_memory
+        if gpu_memory < 2e9:  # Less than 2GB available
+            print("GPU memory insufficient, falling back to CPU")
+            device = torch.device("cpu")
+    
     dataset = CryoDataBackbone(dataset_path)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -34,8 +51,8 @@ def train(dataset_path: str = './',
     train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
     
     # Data loaders for both train and test sets
-    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True, pin_memory=False)
+    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, pin_memory=False)
 
     print(f'Using device: {device}')
     model = UNet().to(device)
@@ -87,6 +104,11 @@ def train(dataset_path: str = './',
                                                                                   true_ca.squeeze(), shells, g=0)
                 combined_loss.backward()
                 optimizer.step()
+                
+                # Clear gradients and free memory
+                optimizer.zero_grad()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
     
                 # Optional: Calculate subset FSC losses if chain mask is available
                 if voxel_mask is not None:
@@ -119,7 +141,9 @@ def train(dataset_path: str = './',
     
 def main(args):
     torch.manual_seed(args.seed)  
-    train(args.dataset_path, seed = 42, device = torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+    train(args.dataset_path, num_epochs = args.num_epochs, lr = args.lr, 
+          device = args.device, seed = args.seed, checkpoint_file = args.checkpoint_file)
+
 
     '''
     train_loader = DataLoader(dataset, batch_size=1, shuffle=True)
@@ -163,22 +187,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-path", default='./')
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--seed", default=42)
-    parser.add_argument("--num-shells", default=20)
-    parser.add_argument("--num-epochs", default=25)
-    parser.add_argument("--lr", default=0.001)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--num-shells", type=int, default=20)
+    parser.add_argument("--num-epochs", type=int, default=25)
+    parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--checkpoint-file", default="./ckpt/sample.pth")
 
     args = parser.parse_args()
     main(args)
-
-   
-
-    
-
-
-
-
-    
-    
-
