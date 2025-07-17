@@ -16,7 +16,7 @@ from cryojam.utils.loss_utils import check_distributions, combined_loss_function
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm  
-from unet_model import UNet
+from CryoNET import UNet
 import os
 
 

@@ -1,5 +1,5 @@
 import torch
-from unet_model import UNet
+from CryoNET import UNet
 from cryojam.utils.loss_utils import combined_loss_function
 import os
 

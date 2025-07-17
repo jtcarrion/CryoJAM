@@ -10,7 +10,7 @@ import argparse
 import os
 import json
 from train import train
-from unet_model import UNet
+from CryoNET import UNet
 from cryojam.utils.loss_utils import combined_loss_function
 
 def save_checkpoint(model, optimizer, epoch, combo_l, fsc_l, rmse_l, metrics, filepath):
@@ -56,6 +56,87 @@ def save_training_history(history, filepath):
         json.dump(history, f, indent=2)
     print(f"✓ Training history saved: {filepath}")
 
+def test_model_on_samples(model, test_loader, device, shells=20, num_samples=3):
+    """Test model on a few samples from test_loader with comprehensive metrics."""
+    print(f"\n=== Testing Model on {num_samples} Samples ===")
+    
+    model.eval()
+    total_combo_loss = 0
+    total_fsc_loss = 0
+    total_rmse_loss = 0
+    sample_count = 0
+    
+    with torch.no_grad():
+        for i, batch in enumerate(test_loader):
+            if i >= num_samples:
+                break
+                
+            # Handle both data formats
+            if 'homolog_ca' in batch and 'true_vol' in batch:
+                # Old format
+                homolog_ca = batch['homolog_ca'].to(device)
+                true_vol = batch['true_vol'].to(device)
+                inputs = torch.stack((homolog_ca, true_vol), dim=1)
+                true_ca = batch['true_ca'].to(device)
+            elif 'homolog_1' in batch and 'syn_density' in batch:
+                # New format
+                homolog_1 = batch['homolog_1'].to(device)
+                homolog_2 = batch['homolog_2'].to(device)
+                homolog_3 = batch['homolog_3'].to(device)
+                true_vol = batch['syn_density'].to(device)
+                inputs = torch.stack((homolog_1, homolog_2, homolog_3, true_vol), dim=1)
+                true_ca = batch['gt_voxel'].to(device)
+            else:
+                print(f"Warning: Unknown data format in batch {i}, skipping...")
+                continue
+            
+            # Get model output
+            output = model(inputs)
+            homolog_ca_predictions = output[:, :1, :, :, :].squeeze()
+            
+            # Calculate losses
+            combo_loss, fsc_loss, rmse_loss, dice_loss = combined_loss_function(
+                homolog_ca_predictions, true_ca.squeeze(), shells
+            )
+            
+            # Accumulate losses
+            total_combo_loss += combo_loss.item()
+            total_fsc_loss += fsc_loss.item()
+            total_rmse_loss += rmse_loss.item()
+            sample_count += 1
+            
+            # Print sample results
+            sample_name = batch.get('name', [f'sample_{i}'])[0] if 'name' in batch else f'sample_{i}'
+            print(f"  Sample {i+1}: {sample_name}")
+            print(f"    - Input shape: {inputs.shape}")
+            print(f"    - Output shape: {homolog_ca_predictions.shape}")
+            print(f"    - Prediction range: [{homolog_ca_predictions.min():.4f}, {homolog_ca_predictions.max():.4f}]")
+            print(f"    - Combo Loss: {combo_loss.item():.4f}")
+            print(f"    - FSC Loss: {fsc_loss.item():.4f}")
+            print(f"    - RMSE Loss: {rmse_loss.item():.4f}")
+            print(f"    - Dice Loss: {dice_loss.item():.4f}")
+    
+    if sample_count > 0:
+        avg_combo_loss = total_combo_loss / sample_count
+        avg_fsc_loss = total_fsc_loss / sample_count
+        avg_rmse_loss = total_rmse_loss / sample_count
+        
+        print(f"\n=== Test Summary ===")
+        print(f"  - Tested {sample_count} samples")
+        print(f"  - Average Combo Loss: {avg_combo_loss:.4f}")
+        print(f"  - Average FSC Loss: {avg_fsc_loss:.4f}")
+        print(f"  - Average RMSE Loss: {avg_rmse_loss:.4f}")
+        
+        return {
+            'avg_combo_loss': avg_combo_loss,
+            'avg_fsc_loss': avg_fsc_loss,
+            'avg_rmse_loss': avg_rmse_loss,
+            'num_samples': sample_count
+        }
+    else:
+        print("No valid samples found for testing!")
+        return {}
+
 def main():
     parser = argparse.ArgumentParser(description='Train CryoJAM model')
     parser.add_argument('--dataset-path', type=str, default='./data/training_data.h5', help='Path to the H5 dataset file')
@@ -68,6 +149,8 @@ def main():
     parser.add_argument('--save-every', type=int, default=5, help='Save checkpoint every N epochs')
     parser.add_argument('--save-best', action='store_true', help='Save best model based on validation loss')
     parser.add_argument('--checkpoint', type=str, default=None, help='Path to a checkpoint .pth file to resume training from (optional)')
+    parser.add_argument('--test-samples', type=int, default=3, help='Number of samples to test after training')
+    
     args = parser.parse_args()
     
     # Set device
@@ -143,27 +226,21 @@ def main():
             model.to(device)
             model.eval()
             print("✓ Model loaded successfully!")
-            # Test the model on a sample from test_loader
-            with torch.no_grad():
-                for batch in test_loader:
-                    homolog_1 = batch['homolog_1'].to(device)
-                    homolog_2 = batch['homolog_2'].to(device)
-                    homolog_3 = batch['homolog_3'].to(device)
-                    true_vol = batch['syn_density'].to(device)
-                    true_ca = batch['gt_voxel'].to(device)
-                    # Stack inputs
-                    inputs = torch.stack((homolog_1, homolog_2, homolog_3, true_vol), dim=1)
-                    # Get model output
-                    output = model(inputs)
-                    homolog_ca_predictions = output[:, :1, :, :, :].squeeze()
-                    # Calculate losses
-                    combo_loss, fsc_loss, rmse_loss, _ = combined_loss_function(
-                        homolog_ca_predictions, true_ca.squeeze(), args.shells, g=0
-                    )
-                    print(f"Test sample - Combo loss: {combo_loss.item():.4f}")
-                    print(f"Test sample - FSC loss: {fsc_loss.item():.4f}")
-                    print(f"Test sample - RMSE loss: {rmse_loss.item():.4f}")
-                    break  # Only test on first sample
+            
+            # Test the model on samples from test_loader
+            if test_loader is not None:
+                test_results = test_model_on_samples(
+                    model, test_loader, device, args.shells, args.test_samples
+                )
+                
+                # Save test results
+                test_results_file = os.path.join(args.checkpoint_dir, 
+                                               f"test_results_{args.num_epochs}epochs.json")
+                with open(test_results_file, 'w') as f:
+                    json.dump(test_results, f, indent=2)
+                print(f"✓ Test results saved to: {test_results_file}")
+            else:
+                print("Warning: No test_loader available for testing")
         else:
             print(f"\nNo checkpoint found at {eval_checkpoint} for evaluation")
 
