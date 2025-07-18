@@ -23,6 +23,7 @@ import os
 def train(dataset_path: str = './', 
           seed: int = 42, 
           device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+          output_dir: str = "./ckpt/",
           checkpoint_file: str = "./ckpt/sample.pth",
           shells: int = 20,
           num_epochs: int = 5, 
@@ -205,7 +206,8 @@ def train(dataset_path: str = './',
         
         # Save checkpoint every N epochs
         if (epoch + 1) % save_every == 0 or epoch == num_epochs - 1:
-            checkpoint_path = f"{checkpoint_file}_epoch_{epoch+1}.pth"
+            #checkpoint_path = f"{checkpoint_file}_epoch_{epoch+1}.pth"
+            checkpoint_path = f"{output_dir}w.{epoch+1}.pth"
             torch.save({
                 'epoch': epoch + 1,
                 'model_state_dict': model.state_dict(),

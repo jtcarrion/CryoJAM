@@ -146,7 +146,7 @@ def main():
     parser.add_argument('--shells', type=int, default=20, help='Number of FSC shells')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--device', type=str, default='auto', help='Device to use (auto, cuda, cpu)')
-    parser.add_argument('--save-every', type=int, default=5, help='Save checkpoint every N epochs')
+    parser.add_argument('--save-every', type=int, default=1, help='Save checkpoint every N epochs')
     parser.add_argument('--save-best', action='store_true', help='Save best model based on validation loss')
     parser.add_argument('--checkpoint', type=str, default=None, help='Path to a checkpoint .pth file to resume training from (optional)')
     parser.add_argument('--test-samples', type=int, default=3, help='Number of samples to test after training')
@@ -170,7 +170,7 @@ def main():
     base_checkpoint = os.path.join(args.checkpoint_dir, 
                                    f"cryojam_checkpoint_{args.num_epochs}epochs")
     best_checkpoint = os.path.join(args.checkpoint_dir, 
-                                   f"cryojam_best_{args.num_epochs}epochs")
+                                   f"cryojam_best_{args.num_epochs}epochs") if args.save_best else None
     history_file = os.path.join(args.checkpoint_dir, 
                                 f"training_history_{args.num_epochs}epochs.json")
     
@@ -197,6 +197,7 @@ def main():
             dataset_path=args.dataset_path,
             seed=args.seed,
             device=device,
+            output_dir=args.checkpoint_dir,
             checkpoint_file=base_checkpoint,
             shells=args.shells,
             num_epochs=args.num_epochs,
