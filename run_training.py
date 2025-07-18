@@ -9,9 +9,15 @@ import numpy as np
 import argparse
 import os
 import json
+from pathlib import Path
 from train import train
 from CryoNET import UNet
 from cryojam.utils.loss_utils import combined_loss_function
+from cryojam.utils.prediction_utils import (
+    binarize_predictions, 
+    coords_from_scaled_vol
+)
+from cryojam.utils.postprocess import save_pdb, save_mrc
 
 def save_checkpoint(model, optimizer, epoch, combo_l, fsc_l, rmse_l, metrics, filepath):
     """Save model checkpoint with comprehensive metadata."""
@@ -137,6 +143,138 @@ def test_model_on_samples(model, test_loader, device, shells=20, num_samples=3):
         print("No valid samples found for testing!")
         return {}
 
+def generate_pdb_from_test_samples(model, test_loader, device, output_dir, num_samples=3):
+    """Generate PDB files from model predictions for test samples."""
+    print(f"\n=== Generating PDB Files for {num_samples} Test Samples ===")
+    
+    model.eval()
+    results = []
+    successful = 0
+    
+    with torch.no_grad():
+        for i, batch in enumerate(test_loader):
+            if i >= num_samples:
+                break
+                
+            try:
+                # Handle both data formats
+                if 'homolog_ca' in batch and 'true_vol' in batch:
+                    # Old format
+                    homolog_ca = batch['homolog_ca'].to(device)
+                    true_vol = batch['true_vol'].to(device)
+                    inputs = torch.stack((homolog_ca, true_vol), dim=1)
+                    true_ca = batch['true_ca'].to(device)
+                    sample_name = batch.get('name', [f'test_sample_{i}'])[0] if 'name' in batch else f'test_sample_{i}'
+                elif 'homolog_1' in batch and 'syn_density' in batch:
+                    # New format
+                    homolog_1 = batch['homolog_1'].to(device)
+                    homolog_2 = batch['homolog_2'].to(device)
+                    homolog_3 = batch['homolog_3'].to(device)
+                    true_vol = batch['syn_density'].to(device)
+                    inputs = torch.stack((homolog_1, homolog_2, homolog_3, true_vol), dim=1)
+                    true_ca = batch['gt_voxel'].to(device)
+                    sample_name = batch.get('name', [f'test_sample_{i}'])[0] if 'name' in batch else f'test_sample_{i}'
+                else:
+                    print(f"Warning: Unknown data format in batch {i}, skipping...")
+                    continue
+                
+                # Get model prediction
+                output = model(inputs)
+                prediction = output[:, :1, :, :, :].squeeze()
+                
+                # Get true CA count for binarization
+                true_ca_count = true_ca.sum().item()
+                
+                # Binarize prediction
+                binarized_prediction = binarize_predictions(prediction, true_ca_count, min_distance=1)
+                
+                # Get scale information (create default if not available)
+                scale_dict = batch.get('true_scale', batch.get('homolog_scale', None))
+                if scale_dict is None:
+                    scale_dict = {
+                        'norm': torch.tensor([1.0, 1.0, 1.0]),
+                        'min_coord': torch.tensor([0.0, 0.0, 0.0])
+                    }
+                
+                # Convert binarized prediction to coordinates
+                coords = torch.argwhere(binarized_prediction == 1)
+                
+                if len(coords) == 0:
+                    print(f"⚠️  No atoms found in prediction for {sample_name}")
+                    continue
+                
+                # Scale coordinates back to original space
+                scaled_coords = coords_from_scaled_vol(binarized_prediction, scale_dict)
+                
+                # Convert to PDB format
+                atoms = []
+                for j, coord in enumerate(scaled_coords):
+                    atoms.append({
+                        'type': 'CA',  # Carbon alpha
+                        'x': coord[0].item(),
+                        'y': coord[1].item(),
+                        'z': coord[2].item()
+                    })
+                
+                # Save PDB file
+                pdb_filename = os.path.join(output_dir, f"{sample_name}_predicted.pdb")
+                save_pdb(atoms, pdb_filename)
+                
+                # Save MRC file for visualization
+                mrc_filename = os.path.join(output_dir, f"{sample_name}_prediction.mrc")
+                save_mrc(prediction, mrc_filename)
+                
+                # Save binarized MRC
+                binarized_mrc_filename = os.path.join(output_dir, f"{sample_name}_binarized.mrc")
+                save_mrc(binarized_prediction, binarized_mrc_filename)
+                
+                result = {
+                    'sample_name': sample_name,
+                    'num_atoms': len(atoms),
+                    'pdb_file': pdb_filename,
+                    'mrc_file': mrc_filename,
+                    'binarized_mrc_file': binarized_mrc_filename,
+                    'coordinates': scaled_coords.cpu().numpy().tolist(),
+                    'prediction_range': [prediction.min().item(), prediction.max().item()],
+                    'binarized_atoms': binarized_prediction.sum().item()
+                }
+                
+                results.append(result)
+                successful += 1
+                
+                print(f"  ✓ {sample_name}: {len(atoms)} atoms, {binarized_prediction.sum().item()} binarized")
+                
+            except Exception as e:
+                print(f"❌ Error generating PDB for test sample {i}: {e}")
+                continue
+    
+    # Save PDB generation summary
+    pdb_summary_file = os.path.join(output_dir, 'pdb_generation_summary.json')
+    summary = {
+        'total_samples': num_samples,
+        'successful': successful,
+        'failed': num_samples - successful,
+        'results': results
+    }
+    
+    with open(pdb_summary_file, 'w') as f:
+        json.dump(summary, f, indent=2)
+    
+    print(f"\n=== PDB Generation Summary ===")
+    print(f"  - Total samples: {num_samples}")
+    print(f"  - Successful: {successful}")
+    print(f"  - Failed: {num_samples - successful}")
+    print(f"  - Summary file: {pdb_summary_file}")
+    
+    if successful > 0:
+        print(f"\n📁 Generated files:")
+        for result in results:
+            print(f"  - {result['pdb_file']}")
+            print(f"  - {result['mrc_file']}")
+            print(f"  - {result['binarized_mrc_file']}")
+    
+    return summary
+
 def main():
     parser = argparse.ArgumentParser(description='Train CryoJAM model')
     parser.add_argument('--dataset-path', type=str, default='./data/training_data.h5', help='Path to the H5 dataset file')
@@ -150,6 +288,7 @@ def main():
     parser.add_argument('--save-best', action='store_true', help='Save best model based on validation loss')
     parser.add_argument('--checkpoint', type=str, default=None, help='Path to a checkpoint .pth file to resume training from (optional)')
     parser.add_argument('--test-samples', type=int, default=3, help='Number of samples to test after training')
+    parser.add_argument('--generate-pdb', action='store_true', help='Generate PDB files for test samples after training')
     
     args = parser.parse_args()
     
@@ -179,6 +318,11 @@ def main():
     print(f"Save every {args.save_every} epochs")
     if args.save_best:
         print(f"Best model will be saved to: {best_checkpoint}")
+    print(f"Test samples: {args.test_samples}")
+    if args.generate_pdb:
+        print(f"PDB generation: ENABLED (will generate PDB files for test samples)")
+    else:
+        print(f"PDB generation: DISABLED (use --generate-pdb to enable)")
     
     try:
         # Initialize training history
@@ -240,6 +384,14 @@ def main():
                 with open(test_results_file, 'w') as f:
                     json.dump(test_results, f, indent=2)
                 print(f"✓ Test results saved to: {test_results_file}")
+
+                # Generate PDB files for test samples
+                if args.generate_pdb:
+                    generate_pdb_from_test_samples(
+                        model, test_loader, device, args.checkpoint_dir, args.test_samples
+                    )
+                else:
+                    print("Skipping PDB generation (use --generate-pdb to enable)")
             else:
                 print("Warning: No test_loader available for testing")
         else:
