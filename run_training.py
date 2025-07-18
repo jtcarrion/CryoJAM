@@ -194,7 +194,12 @@ def generate_pdb_from_test_samples(model, test_loader, device, output_dir, num_s
                     print(f"  - True CA count (int): {int(true_ca_count)}")
                     
                     binarized_prediction = binarize_predictions(prediction, true_ca_count, min_distance=1)
+                    # Move binarized prediction back to the same device as the input
+                    binarized_prediction = binarized_prediction.to(device)
                     print(f"  ✓ Binarization successful: {binarized_prediction.sum().item()} atoms")
+                    print(f"  - Binarized device: {binarized_prediction.device}")
+                    print(f"  - Scale norm device: {scale_dict['norm'].device}")
+                    print(f"  - Scale min_coord device: {scale_dict['min_coord'].device}")
                 except Exception as e:
                     print(f"  ❌ Binarization failed: {e}")
                     import traceback
@@ -208,6 +213,12 @@ def generate_pdb_from_test_samples(model, test_loader, device, output_dir, num_s
                         'norm': torch.tensor([1.0, 1.0, 1.0], device=device),
                         'min_coord': torch.tensor([0.0, 0.0, 0.0], device=device)
                     }
+                else:
+                    # Ensure scale_dict tensors are on the correct device
+                    scale_dict = {
+                        'norm': scale_dict['norm'].to(device),
+                        'min_coord': scale_dict['min_coord'].to(device)
+                    }
                 
                 # Convert binarized prediction to coordinates
                 coords = torch.argwhere(binarized_prediction == 1)
@@ -217,7 +228,12 @@ def generate_pdb_from_test_samples(model, test_loader, device, output_dir, num_s
                     continue
                 
                 # Scale coordinates back to original space
-                scaled_coords = coords_from_scaled_vol(binarized_prediction, scale_dict)
+                try:
+                    scaled_coords = coords_from_scaled_vol(binarized_prediction, scale_dict)
+                    print(f"  ✓ Coordinate scaling successful: {len(scaled_coords)} coordinates")
+                except Exception as e:
+                    print(f"  ❌ Coordinate scaling failed: {e}")
+                    continue
                 
                 # Convert to PDB format
                 atoms = []

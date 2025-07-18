@@ -71,6 +71,13 @@ def coords_from_scaled_vol(vol, scale_dict):
     '''
 ### NEW CHANGES 
 def coords_from_scaled_vol(vol, scale_dict):
+    # Ensure vol and scale_dict tensors are on the same device
+    device = vol.device
+    scale_dict = {
+        'norm': scale_dict['norm'].to(device),
+        'min_coord': scale_dict['min_coord'].to(device)
+    }
+    
     coords = torch.argwhere(vol == 1)
     scaled_coords = coords * 1 / scale_dict["norm"] + scale_dict["min_coord"]
     return scaled_coords
