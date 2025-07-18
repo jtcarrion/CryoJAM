@@ -241,7 +241,7 @@ def coord_rmsd_loss_function(output, target, scale_dict):
     return loss
 
 
-def combined_loss_function(prediction, target, num_shells, a=1, b=1, g=1):
+def combined_loss_function(prediction, target, num_shells, a=1, b=1, g=0):
     fsc_loss = fsc_loss_function(prediction, target, num_shells)
     rmse_loss = rmse_loss_function(prediction, target)
     dice_loss = dice_loss_function(prediction, target)
