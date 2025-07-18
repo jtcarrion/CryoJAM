@@ -18,29 +18,25 @@ def binarize_predictions(preds, true_atom_count, min_distance):
 
     count = 0
     for idx in indices[:true_atom_count]:
-        point = torch.unravel_index(idx, preds.shape)
-        point = tuple(tensor.cpu().numpy() for tensor in point)
-        # point#switched here
-        #print("Checking point:", point)
-
+        # Convert tensor index to numpy for unraveling
+        idx_np = idx.cpu().numpy()
+        point = np.unravel_index(idx_np, preds.shape)
+        point = tuple(point)  # Convert to tuple for cKDTree
+        
         if not selected_points:
             selected_points.append(point)
             result[idx] = 1
-            #print("Adding first point:", point)
             count += 1
             if len(selected_points) == 1:
                 tree = cKDTree(selected_points)
         else:
             dist, _ = tree.query(point)
-            #print("Distance from nearest point:", dist)
             if dist >= min_distance:
                 selected_points.append(point)
                 tree = cKDTree(selected_points)  # Rebuild tree with new point
                 result[idx] = 1
                 count += 1
-                #print("Adding point:", point)
 
-    # print("Total points added:", count)
     return result.reshape((64,64,64))
 
 

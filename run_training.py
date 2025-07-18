@@ -185,15 +185,22 @@ def generate_pdb_from_test_samples(model, test_loader, device, output_dir, num_s
                 # Get true CA count for binarization
                 true_ca_count = true_ca.sum().item()
                 
+                print(f"  Processing {sample_name}: prediction shape {prediction.shape}, true_ca_count {true_ca_count}")
+                
                 # Binarize prediction
-                binarized_prediction = binarize_predictions(prediction, true_ca_count, min_distance=1)
+                try:
+                    binarized_prediction = binarize_predictions(prediction, true_ca_count, min_distance=1)
+                    print(f"  ✓ Binarization successful: {binarized_prediction.sum().item()} atoms")
+                except Exception as e:
+                    print(f"  ❌ Binarization failed: {e}")
+                    continue
                 
                 # Get scale information (create default if not available)
                 scale_dict = batch.get('true_scale', batch.get('homolog_scale', None))
                 if scale_dict is None:
                     scale_dict = {
-                        'norm': torch.tensor([1.0, 1.0, 1.0]),
-                        'min_coord': torch.tensor([0.0, 0.0, 0.0])
+                        'norm': torch.tensor([1.0, 1.0, 1.0], device=device),
+                        'min_coord': torch.tensor([0.0, 0.0, 0.0], device=device)
                     }
                 
                 # Convert binarized prediction to coordinates
