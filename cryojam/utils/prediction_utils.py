@@ -9,6 +9,8 @@ import torch
 ######### 20240511 all the changes that were made have a comment that indicates what was the changed
 
 def binarize_predictions(preds, true_atom_count, min_distance):
+    # Ensure preds is on CPU for numpy operations
+    preds = preds.cpu()
     preds = preds.ravel()
     indices = torch.argsort(-preds) #switched to torch here
 
@@ -16,6 +18,9 @@ def binarize_predictions(preds, true_atom_count, min_distance):
     selected_points = []
     tree = None
 
+    # Convert true_atom_count to integer
+    true_atom_count = int(true_atom_count)
+    
     count = 0
     for idx in indices[:true_atom_count]:
         # Convert tensor index to numpy for unraveling

@@ -189,10 +189,16 @@ def generate_pdb_from_test_samples(model, test_loader, device, output_dir, num_s
                 
                 # Binarize prediction
                 try:
+                    print(f"  - Prediction range: [{prediction.min():.4f}, {prediction.max():.4f}]")
+                    print(f"  - True CA count (float): {true_ca_count}")
+                    print(f"  - True CA count (int): {int(true_ca_count)}")
+                    
                     binarized_prediction = binarize_predictions(prediction, true_ca_count, min_distance=1)
                     print(f"  ✓ Binarization successful: {binarized_prediction.sum().item()} atoms")
                 except Exception as e:
                     print(f"  ❌ Binarization failed: {e}")
+                    import traceback
+                    traceback.print_exc()
                     continue
                 
                 # Get scale information (create default if not available)
