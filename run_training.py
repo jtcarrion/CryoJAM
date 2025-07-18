@@ -187,6 +187,20 @@ def generate_pdb_from_test_samples(model, test_loader, device, output_dir, num_s
                 
                 print(f"  Processing {sample_name}: prediction shape {prediction.shape}, true_ca_count {true_ca_count}")
                 
+                # Get scale information (create default if not available)
+                scale_dict = batch.get('true_scale', batch.get('homolog_scale', None))
+                if scale_dict is None:
+                    scale_dict = {
+                        'norm': torch.tensor([1.0, 1.0, 1.0], device=device),
+                        'min_coord': torch.tensor([0.0, 0.0, 0.0], device=device)
+                    }
+                else:
+                    # Ensure scale_dict tensors are on the correct device
+                    scale_dict = {
+                        'norm': scale_dict['norm'].to(device),
+                        'min_coord': scale_dict['min_coord'].to(device)
+                    }
+                
                 # Binarize prediction
                 try:
                     print(f"  - Prediction range: [{prediction.min():.4f}, {prediction.max():.4f}]")
@@ -205,20 +219,6 @@ def generate_pdb_from_test_samples(model, test_loader, device, output_dir, num_s
                     import traceback
                     traceback.print_exc()
                     continue
-                
-                # Get scale information (create default if not available)
-                scale_dict = batch.get('true_scale', batch.get('homolog_scale', None))
-                if scale_dict is None:
-                    scale_dict = {
-                        'norm': torch.tensor([1.0, 1.0, 1.0], device=device),
-                        'min_coord': torch.tensor([0.0, 0.0, 0.0], device=device)
-                    }
-                else:
-                    # Ensure scale_dict tensors are on the correct device
-                    scale_dict = {
-                        'norm': scale_dict['norm'].to(device),
-                        'min_coord': scale_dict['min_coord'].to(device)
-                    }
                 
                 # Convert binarized prediction to coordinates
                 coords = torch.argwhere(binarized_prediction == 1)
