@@ -364,7 +364,15 @@ def main():
         
         # Test loading the best model or a specific checkpoint
         eval_checkpoint = args.checkpoint if args.checkpoint is not None else best_checkpoint
-        if os.path.exists(eval_checkpoint):
+        
+        # If no checkpoint specified, try to use the final checkpoint
+        if eval_checkpoint is None:
+            final_checkpoint = f"{base_checkpoint}_epoch_{args.num_epochs}.pth"
+            if os.path.exists(final_checkpoint):
+                eval_checkpoint = final_checkpoint
+                print(f"Using final checkpoint for evaluation: {eval_checkpoint}")
+        
+        if eval_checkpoint is not None and os.path.exists(eval_checkpoint):
             print(f"\nTesting model loading from: {eval_checkpoint}")
             model = UNet()
             load_checkpoint(eval_checkpoint, model, device=device)
@@ -394,6 +402,8 @@ def main():
                     print("Skipping PDB generation (use --generate-pdb to enable)")
             else:
                 print("Warning: No test_loader available for testing")
+        elif eval_checkpoint is None:
+            print(f"\nNo checkpoint specified for evaluation (use --checkpoint or --save-best)")
         else:
             print(f"\nNo checkpoint found at {eval_checkpoint} for evaluation")
 
