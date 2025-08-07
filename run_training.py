@@ -207,7 +207,7 @@ def generate_pdb_from_test_samples(model, test_loader, device, output_dir, num_s
                     print(f"  - True CA count (float): {true_ca_count}")
                     print(f"  - True CA count (int): {int(true_ca_count)}")
                     
-                    binarized_prediction = binarize_predictions(prediction, true_ca_count, min_distance=1)
+                    binarized_prediction = binarize_predictions(prediction, true_ca_count, min_distance=args.min_distance)
                     # Move binarized prediction back to the same device as the input
                     binarized_prediction = binarized_prediction.to(device)
                     print(f"  ✓ Binarization successful: {binarized_prediction.sum().item()} atoms")
@@ -318,6 +318,7 @@ def main():
     parser.add_argument('--checkpoint', type=str, default=None, help='Path to a checkpoint .pth file to resume training from (optional)')
     parser.add_argument('--test-samples', type=int, default=3, help='Number of samples to test after training')
     parser.add_argument('--generate-pdb', action='store_true', help='Generate PDB files for test samples after training')
+    parser.add_argument('--min-distance', type=int, default=2, help='Minimum distance between atoms in voxels (default: 2 for CA backbone sparsity)')
     
     args = parser.parse_args()
     

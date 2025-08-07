@@ -37,7 +37,7 @@ def load_model(checkpoint_path, device='cuda'):
         print(f"❌ Failed to load model: {e}")
         return None
 
-def predict_and_binarize(model, sample, device='cuda'):
+def predict_and_binarize(model, sample, device='cuda', min_distance=2):
     """Run model prediction and binarize the output."""
     model.eval()
     
@@ -71,8 +71,8 @@ def predict_and_binarize(model, sample, device='cuda'):
             # Estimate from scale information
             true_ca_count = 100  # Default estimate
         
-        # Binarize prediction
-        binarized_prediction = binarize_predictions(prediction, true_ca_count, min_distance=1)
+        # Binarize prediction with specified minimum distance
+        binarized_prediction = binarize_predictions(prediction, true_ca_count, min_distance)
         
         return prediction, binarized_prediction
 
@@ -153,6 +153,8 @@ def main():
                        help='Number of samples to process (default: all)')
     parser.add_argument('--sample-indices', type=str, default=None,
                        help='Comma-separated list of specific sample indices to process')
+    parser.add_argument('--min-distance', type=int, default=2,
+                       help='Minimum distance between atoms in voxels (default: 2 for CA backbone sparsity)')
     
     args = parser.parse_args()
     
@@ -211,7 +213,7 @@ def main():
             print(f"\n[{i+1}/{len(indices)}] Processing {sample_name}...")
             
             # Generate prediction
-            prediction, binarized_prediction = predict_and_binarize(model, sample, device)
+            prediction, binarized_prediction = predict_and_binarize(model, sample, device, args.min_distance)
             
             # Generate PDB
             result = generate_pdb_from_prediction(
