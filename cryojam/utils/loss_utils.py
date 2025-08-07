@@ -3,7 +3,22 @@ import torch.nn.functional as F
 from .prediction_utils import binarize_predictions, greedy_selection
 
 def calculate_fsc(volume1, volume2, num_shells):
-    # Compute the Fourier Transforms
+    """
+    Calculate FSC between two 3D volumes with full GPU acceleration.
+    
+    Args:
+        volume1: First 3D volume tensor
+        volume2: Second 3D volume tensor  
+        num_shells: Number of FSC shells
+    
+    Returns:
+        fsc: FSC values tensor on the same device as input
+    """
+    # Ensure both volumes are on the same device
+    device = volume1.device
+    volume2 = volume2.to(device)
+    
+    # Compute the Fourier Transforms (GPU accelerated)
     fft_vol1 = torch.fft.fftn(volume1)
     fft_vol2 = torch.fft.fftn(volume2)
 
@@ -11,27 +26,39 @@ def calculate_fsc(volume1, volume2, num_shells):
     fft_vol1_shifted = torch.fft.fftshift(fft_vol1)
     fft_vol2_shifted = torch.fft.fftshift(fft_vol2)
 
-    # Compute radii of each voxel
-    center = torch.tensor(volume1.shape) // 2
-    # following line of code hard-indexes in, will not index correctly if 0, 1, 2 are not the volumetric dimensions!
-    kx, ky, kz = torch.meshgrid(torch.arange(volume1.shape[0]), torch.arange(volume1.shape[1]), torch.arange(volume1.shape[2]), indexing='ij')
+    # Compute radii of each voxel (GPU accelerated)
+    center = torch.tensor(volume1.shape, device=device) // 2
+    kx, ky, kz = torch.meshgrid(
+        torch.arange(volume1.shape[0], device=device), 
+        torch.arange(volume1.shape[1], device=device), 
+        torch.arange(volume1.shape[2], device=device), 
+        indexing='ij'
+    )
     radii = torch.sqrt((kx - center[0])**2 + (ky - center[1])**2 + (kz - center[2])**2)
     max_radius = torch.max(radii)
 
-    # Initialize FSC
-    fsc = torch.zeros(num_shells, device=volume1.device)
+    # Initialize FSC on the correct device
+    fsc = torch.zeros(num_shells, device=device)
 
-    # Calculate FSC for each shell
+    # Calculate FSC for each shell (GPU accelerated)
     shell_indices = torch.round((radii / max_radius) * num_shells).long()
+    
     for i in range(num_shells):
         mask = (shell_indices == i)
         num_voxels = mask.sum()
 
         if num_voxels > 0:
+            # GPU-accelerated correlation calculation
             corr = torch.sum(torch.conj(fft_vol1_shifted[mask]) * fft_vol2_shifted[mask])
             vol1_power = torch.sum(torch.abs(fft_vol1_shifted[mask])**2)
             vol2_power = torch.sum(torch.abs(fft_vol2_shifted[mask])**2)
-            fsc[i] = torch.abs(corr) / torch.sqrt(vol1_power * vol2_power)
+            
+            # Avoid division by zero
+            denominator = torch.sqrt(vol1_power * vol2_power)
+            if denominator > 0:
+                fsc[i] = torch.abs(corr) / denominator
+            else:
+                fsc[i] = torch.tensor(0.0, device=device)
 
     return fsc
 
@@ -46,6 +73,7 @@ def calculate_rmse(vol1, vol2):
 
 
 def calculate_dice(prediction, target):
+    smooth = 1e-6  # Small constant to prevent division by zero
     intersection = torch.sum(prediction * target)
     union = torch.sum(prediction) + torch.sum(target)
     dice = (2. * intersection + smooth) / (union + smooth)
@@ -90,6 +118,37 @@ def calculate_rmsd(coords1, coords2):
     return rmsd
 
 
+def calculate_full_protein_fsc_loss(predictions, targets, synthetic_density, shells):
+    """
+    Calculate FSC loss using synthetic density as a natural mask with GPU acceleration.
+    This treats the synthetic density as a continuous mask where higher values
+    indicate more important protein regions.
+    
+    Args:
+        predictions: Model predictions (64³ tensor)
+        targets: Ground truth targets (64³ tensor) 
+        synthetic_density: Synthetic EM density (64³ tensor) - used as natural mask
+        shells: Number of FSC shells
+    
+    Returns:
+        fsc_loss: FSC loss value
+    """
+    # Ensure all tensors are on the same device
+    device = predictions.device
+    targets = targets.to(device)
+    synthetic_density = synthetic_density.to(device)
+    
+    # Use synthetic density as a continuous mask
+    # Higher density regions get more weight in the FSC calculation
+    weighted_predictions = predictions * synthetic_density
+    weighted_targets = targets * synthetic_density
+    
+    # Calculate FSC loss on the weighted volumes
+    fsc_loss = fsc_loss_function(weighted_predictions, weighted_targets, shells)
+    
+    return fsc_loss
+
+
 def calculate_subset_fsc_losses(homolog_ca_predictions, true_ca, voxel_mask, shells):
     
 
@@ -131,8 +190,27 @@ def update_fsc_loss_dict(chain_fsc_subset_loss, chain_64_fsc_box_loss, non_chain
 
 # compute the loss given volumes
 def fsc_loss_function(prediction, target, num_shells=20):
+    """
+    Calculate FSC loss with GPU acceleration.
+    
+    Args:
+        prediction: Model predictions tensor
+        target: Ground truth tensor
+        num_shells: Number of FSC shells
+    
+    Returns:
+        loss: FSC loss value
+    """
+    # Ensure tensors are on the same device
+    device = prediction.device
+    target = target.to(device)
+    
+    # Calculate FSC values
     fsc_values = calculate_fsc(prediction, target, num_shells)
-    loss = 1.0 - fsc_values.mean()  # Mean of all FSC values across shells
+    
+    # Calculate loss (1 - mean FSC)
+    loss = 1.0 - fsc_values.mean()
+    
     return loss
 
 def rmsd_loss_function(prediction, target):
@@ -142,7 +220,7 @@ def rmse_loss_function(prediction, target):
     return calculate_rmse(prediction, target)
 
 def dice_loss_function(prediction, target):
-    return 1 - scalculate_dice(prediction, target)
+    return 1 - calculate_dice(prediction, target)
 
 def cosine_similarity_loss_function(output, target):
     output_flat = output.view(output.size(0), -1)
@@ -163,11 +241,11 @@ def coord_rmsd_loss_function(output, target, scale_dict):
     return loss
 
 
-def combined_loss_function(prediction, target, num_shells, alpha=1, beta=1, gamma=1):
+def combined_loss_function(prediction, target, num_shells, a=1, b=1, g=0):
     fsc_loss = fsc_loss_function(prediction, target, num_shells)
     rmse_loss = rmse_loss_function(prediction, target)
     dice_loss = dice_loss_function(prediction, target)
-    total_loss = alpha * fsc_loss + beta * rmse_loss + gamma * dice_loss
+    total_loss = a * fsc_loss + b * rmse_loss + g * dice_loss
     return total_loss, fsc_loss, rmse_loss, dice_loss
 
 
@@ -187,5 +265,4 @@ def check_distributions(trainLoader, testLoader, num_shells=20):
         test_rmsd.append(rmsd_value)
 
     return train_fsc, train_rmsd, test_fsc, test_rmsd
-
     

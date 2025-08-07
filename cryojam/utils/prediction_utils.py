@@ -9,6 +9,8 @@ import torch
 ######### 20240511 all the changes that were made have a comment that indicates what was the changed
 
 def binarize_predictions(preds, true_atom_count, min_distance):
+    # Ensure preds is on CPU for numpy operations
+    preds = preds.cpu()
     preds = preds.ravel()
     indices = torch.argsort(-preds) #switched to torch here
 
@@ -16,31 +18,30 @@ def binarize_predictions(preds, true_atom_count, min_distance):
     selected_points = []
     tree = None
 
+    # Convert true_atom_count to integer
+    true_atom_count = int(true_atom_count)
+    
     count = 0
     for idx in indices[:true_atom_count]:
-        point = torch.unravel_index(idx, preds.shape)
-        point = tuple(tensor.cpu().numpy() for tensor in point)
-        # point#switched here
-        #print("Checking point:", point)
-
+        # Convert tensor index to numpy for unraveling
+        idx_np = idx.cpu().numpy()
+        point = np.unravel_index(idx_np, preds.shape)
+        point = tuple(point)  # Convert to tuple for cKDTree
+        
         if not selected_points:
             selected_points.append(point)
             result[idx] = 1
-            #print("Adding first point:", point)
             count += 1
             if len(selected_points) == 1:
                 tree = cKDTree(selected_points)
         else:
             dist, _ = tree.query(point)
-            #print("Distance from nearest point:", dist)
             if dist >= min_distance:
                 selected_points.append(point)
                 tree = cKDTree(selected_points)  # Rebuild tree with new point
                 result[idx] = 1
                 count += 1
-                #print("Adding point:", point)
 
-    # print("Total points added:", count)
     return result.reshape((64,64,64))
 
 
@@ -70,6 +71,13 @@ def coords_from_scaled_vol(vol, scale_dict):
     '''
 ### NEW CHANGES 
 def coords_from_scaled_vol(vol, scale_dict):
+    # Ensure vol and scale_dict tensors are on the same device
+    device = vol.device
+    scale_dict = {
+        'norm': scale_dict['norm'].to(device),
+        'min_coord': scale_dict['min_coord'].to(device)
+    }
+    
     coords = torch.argwhere(vol == 1)
     scaled_coords = coords * 1 / scale_dict["norm"] + scale_dict["min_coord"]
     return scaled_coords

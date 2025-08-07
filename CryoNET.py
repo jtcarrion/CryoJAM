@@ -7,7 +7,7 @@ class UNet(nn.Module):
         super(UNet, self).__init__()
         
         # Define the encoder path (downsampling)
-        self.down_conv1 = self.contract_block(2, 64, 3, 1)
+        self.down_conv1 = self.contract_block(4, 64, 3, 1)
         self.down_conv2 = self.contract_block(64, 128, 3, 1)
         self.down_conv3 = self.contract_block(128, 256, 3, 1)
         self.down_conv4 = self.contract_block(256, 512, 3, 1)

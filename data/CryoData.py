@@ -1,8 +1,8 @@
-### remake a prediction
 import torch
 import numpy as np
 from torch.utils.data import Dataset
 import h5py
+
 
 class CryoData(Dataset):
     def __init__(self, h5_file, representation='backbone'):
@@ -33,11 +33,19 @@ class CryoData(Dataset):
             # Get ground truth data
             ground_truth_grid = torch.tensor(group['ground_truth_grid'][:])
             ground_truth_coords = torch.tensor(group['ground_truth_coords'][:])
-            em_volume = torch.tensor(group['em_volume'][:])
+            em_volume = torch.tensor(group['em_volume_real'][:])
+            syn_volume = torch.tensor(group['em_volume_synthetic'][:])
+
+            # Get scale information - handle scalar values properly
+            def safe_read_dataset(dataset):
+                """Safely read dataset whether it's scalar or array."""
+                if dataset.shape == ():  # Scalar
+                    return torch.tensor([dataset[()]])  # Convert scalar to 1D tensor
+                else:  # Array
+                    return torch.tensor(dataset[:])
             
-            # Get scale information
-            scale_norm = torch.tensor(group['scale_norm'][:])
-            scale_min = torch.tensor(group['scale_min'][:])
+            scale_norm = safe_read_dataset(group['scale_norm'])
+            scale_min = safe_read_dataset(group['scale_min'])
             
             # Get metadata from attributes
             pdb_id = group.attrs.get('pdb_id', '')
@@ -45,28 +53,26 @@ class CryoData(Dataset):
             em_map_file = group.attrs.get('em_map_file', '')
             homolog_types = group.attrs.get('homolog_types', [])
             
-            # Initialize result with ground truth data
+            # Return ONLY tensor data for batching (no metadata)
             result = {
                 'emdb_id': emdb_id,
                 'pdb_id': pdb_id,
                 'representation': self.representation,
-                'ground_truth_grid': ground_truth_grid,  # 64³ binary grid
-                'ground_truth_coords': ground_truth_coords,  # Raw coordinates
-                'em_volume': em_volume,  # EM density map (64³)
+                'gt_voxel': ground_truth_grid,  # 64³ binary grid
+                'gt_coords': ground_truth_coords,  # Raw coordinates
+                'em_density': em_volume,  # EM density map (64³)
+                'syn_density': syn_volume,  # Synthetic EM density map (64³)
                 'scale_norm': scale_norm,
-                'scale_min': scale_min,
-                'metadata': {
-                    'pdb_file': pdb_file,
-                    'em_map_file': em_map_file,
-                    'homolog_types': homolog_types
-                }
+                'scale_min': scale_min
             }
             
-            # Add available homologs as flat keys
-            for homolog_type in ['perturbed1', 'perturbed2', 'complex']:
-                homolog_key = f'homolog_{homolog_type}'
-                if homolog_key in group:
-                    result[homolog_key] = torch.tensor(group[homolog_key][:])
+            # Add homologs with correct key names (matching actual H5 structure)
+            if 'homolog_perturbed1' in group:
+                result['homolog_1'] = torch.tensor(group['homolog_perturbed1'][:])
+            if 'homolog_perturbed2' in group:
+                result['homolog_2'] = torch.tensor(group['homolog_perturbed2'][:])
+            if 'homolog_complex' in group:
+                result['homolog_3'] = torch.tensor(group['homolog_complex'][:])
             
         return result
 
@@ -77,5 +83,5 @@ class CryoDataBackbone(CryoData):
 
 class CryoDataAllAtom(CryoData):
     """Dataset for all-atom representation."""
-    def __init__(self, h5_file, representation='allatom'):
+    def __init__(self, h5_file):
         super().__init__(h5_file, representation='allatom')
